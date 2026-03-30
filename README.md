@@ -25,15 +25,16 @@ This is an early MVP.
 
 ## Quick start
 
- apt install ffmpeg
- cd /opt
- python -m venv heket
- cd heket
- source bin/activate
- pip install -r requirements.txt
- python heket_pipeline.py &
- python heket_web.py
-
+```bash
+apt install ffmpeg
+cd /opt
+python -m venv heket
+cd heket
+source bin/activate
+pip install -r requirements.txt
+python heket_pipeline.py &
+python heket_web.py
+```
 ---
 
 ## Example output
