@@ -16,6 +16,7 @@ import heket_config
 model = joblib.load(heket_config.MODEL_FILE)
 
 # ==== DB SETUP ====
+os.makedirs(heket_config.DATA_DIR, exist_ok=True)
 conn = sqlite3.connect(heket_config.DB_FILE)
 cur = conn.cursor()
 
@@ -99,11 +100,19 @@ def start_ffmpeg():
 		"-strftime", "1", os.path.join(heket_config.IN_DIR, heket_config.FILE_FORMAT)
     ])
 
+def start_web():
+    return subprocess.Popen([
+        "python", "heket_web.py",
+    ])
+	
+
 # ==== MAIN LOOP ====
 def main():
     while True:
         print("Starting ffmpeg...")
-        proc = start_ffmpeg()
+        ffmpeg = start_ffmpeg()
+        print("Starting web...")
+        web = start_web()
 
         try:
             while True:
@@ -119,15 +128,21 @@ def main():
                     process_file(path)
 
                 # check if ffmpeg died
-                if proc.poll() is not None:
+                if ffmpeg.poll() is not None:
                     print("ffmpeg died, restarting...")
-                    break
+                    ffmpeg = start_ffmpeg()
+
+                # check if web died
+                if web.poll() is not None:
+                    print("web died, restarting...")
+                    web = start_web()
 
                 time.sleep(2)
 
         except KeyboardInterrupt:
             print("Stopping...")
-            proc.terminate()
+            ffmpeg.terminate()
+            web.terminate()
             break
 
         time.sleep(2)

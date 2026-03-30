@@ -26,15 +26,17 @@ This is an early MVP.
 ## Quick start
 
 ```bash
-apt install ffmpeg
+apt install git ffmpeg
 cd /opt
-python -m venv heket
+python -m venv heket-env
+source heket-env/bin/activate
+git clone https://github.com/lux-k/heket
 cd heket
-source bin/activate
 pip install -r requirements.txt
-python heket_pipeline.py &
-python heket_web.py
+echo "HEKET_RTSP_URL=rtsp://admin:password@192.168.100.1:554/stream" > .env
+python heket_pipeline.py
 ```
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000
 ---
 
 ## Example output

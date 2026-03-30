@@ -16,7 +16,7 @@ def index():
     cur.execute("""
     SELECT recorded, species, confidence, file
     FROM detections
-    WHERE
+    WHERE confidence > 0.2
     ORDER BY recorded DESC
     LIMIT 10
     """)
@@ -34,7 +34,7 @@ def index():
     cur.execute("""
     SELECT species, count(*)
     FROM detections
-    WHERE
+    WHERE confidence > 0.2
 	GROUP BY species
     ORDER BY count(*) DESC
     """)
