@@ -6,7 +6,7 @@ WORKDIR /app
 
 COPY ./heket/*.py /app/
 COPY ./heket/run.sh /app/
-MKDIR /app/models
+RUN mkdir /app/models
 COPY ./heket/models/* /app/models
 COPY ./heket/requirements.txt /app/
 COPY ./.env /app/
