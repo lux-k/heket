@@ -1,0 +1,18 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras
+
+WORKDIR /app
+
+COPY ./heket/*.py /app/
+COPY ./heket/run.sh /app/
+MKDIR /app/models
+COPY ./heket/models/* /app/models
+COPY ./heket/requirements.txt /app/
+COPY ./.env /app/
+
+RUN chmod +x /app/*.sh
+
+VOLUME ["/data"]
+
+CMD ["/app/run.sh"]
