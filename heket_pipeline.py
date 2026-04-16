@@ -139,7 +139,7 @@ def main():
 
                 time.sleep(2)
 
-        except KeyboardInterrupt:
+        finally:
             print("Stopping...")
             ffmpeg.terminate()
             web.terminate()

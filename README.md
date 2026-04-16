@@ -36,7 +36,9 @@ pip install -r requirements.txt
 echo "HEKET_RTSP_URL=rtsp://admin:password@192.168.100.1:554/stream" > .env
 python heket_pipeline.py
 ```
+
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000
+
 ---
 
 ## Example output
