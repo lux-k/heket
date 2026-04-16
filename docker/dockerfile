@@ -1,6 +1,7 @@
 FROM python:3.12-alpine
 
 RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras
+RUN apk add --no-cache gcc
 
 WORKDIR /app
 
