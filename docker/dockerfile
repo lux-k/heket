@@ -1,7 +1,7 @@
 FROM python:3.12-alpine
 
-RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras
-RUN apk add --no-cache gcc
+RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras libsndfile-dev
+RUN apk add --no-cache build-base cmake llvm20-dev llvm20-static libedit-dev zlib-dev clang llvm20-gtest
 
 WORKDIR /app
 
@@ -10,6 +10,7 @@ COPY ./heket/docker/run.sh /app/
 RUN mkdir /app/models
 COPY ./heket/models/* /app/models
 COPY ./heket/requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
 COPY ./.env /app/
 
 RUN chmod +x /app/*.sh
