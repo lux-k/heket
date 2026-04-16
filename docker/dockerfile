@@ -5,7 +5,7 @@ RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras
 WORKDIR /app
 
 COPY ./heket/*.py /app/
-COPY ./heket/run.sh /app/
+COPY ./heket/docker/run.sh /app/
 RUN mkdir /app/models
 COPY ./heket/models/* /app/models
 COPY ./heket/requirements.txt /app/
