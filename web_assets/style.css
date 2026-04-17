@@ -1,0 +1,119 @@
+:root {
+  /* Core brand */
+  --heket-green: #8fbe2e;
+  --heket-green-2: #6fa51f;
+  --heket-deep-green: #1f4d16;
+  --heket-pond: #123b1b;
+
+  /* Accent */
+  --heket-gold: #d8b42d;
+  --heket-light-gold: #f0dc72;
+  --heket-ruby: #b3342b;
+
+  /* Neutrals */
+  --heket-cream: #f6f1d8;
+  --heket-soft: #e6ecd8;
+  --heket-mist: #b8c7b8;
+  --heket-shadow: rgba(18, 59, 27, 0.18);
+
+  /* UI roles */
+  --bg: #f7f8f3;
+  --bg-alt: #edf4e7;
+  --surface: #ffffff;
+  --surface-muted: #f3f7ee;
+  --text: #17321a;
+  --text-soft: #48624d;
+  --border: #c9d8c6;
+
+  --link: var(--heket-green-2);
+  --link-hover: var(--heket-deep-green);
+
+  --button-bg: linear-gradient(180deg, #9fce39 0%, #7fb327 100%);
+  --button-text: #17321a;
+  --button-border: #5d8f1b;
+
+  --hero-bg: linear-gradient(180deg, #f4f8ec 0%, #e7f0dc 100%);
+  --card-shadow: 0 8px 24px var(--heket-shadow);
+  --radius: 14px;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+header.hero {
+  background: var(--hero-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 3rem 1.25rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+  padding: 1.25rem;
+}
+
+.badge {
+  display: inline-block;
+  background: var(--surface-muted);
+  color: var(--heket-deep-green);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.button,
+button {
+  background: var(--button-bg);
+  color: var(--button-text);
+  border: 1px solid var(--button-border);
+  border-radius: 999px;
+  padding: 0.75rem 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(31, 77, 22, 0.15);
+  height:20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.button:hover,
+button:hover {
+  filter: brightness(0.97);
+}
+
+.button.secondary {
+  background: var(--surface);
+  color: var(--heket-deep-green);
+  border: 1px solid var(--heket-green);
+}
+
+h1, h2, h3 {
+  color: var(--heket-pond);
+}
+
+.accent {
+  color: var(--heket-gold);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
