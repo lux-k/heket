@@ -20,7 +20,7 @@ Acoustic detection of frog calls from continuous audio streams.
 
 ---
 
-[Heket screenshot](web_assets/screenshot.png)
+![Heket screenshot](web_assets/screenshot.png)
 
 
 ## Current state
