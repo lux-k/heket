@@ -8,12 +8,36 @@ from datetime import datetime
 import joblib
 import shutil
 import sys
+import signal
 
 # ==== CONFIG ====
 import heket_config
 
+with open(os.path.join(heket_config.DATA_DIR, "heket.pid"), "w") as f:
+    f.write(str(os.getpid()))
+
+reload_flag = False
+
+def handle_reload(signum, frame):
+    global reload_flag
+    reload_flag = True
+
+signal.signal(signal.SIGUSR1, handle_reload)
+
 # ==== LOAD MODEL ====
-model = joblib.load(heket_config.MODEL_FILE)
+model = None
+
+def reload_config():
+    global model
+    global reload_flag
+    print("Reloading config")
+    print(f"Model was {heket_config.MODEL_FILE}")
+    heket_config.reload()
+    model = joblib.load(heket_config.MODEL_FILE)
+    print(f"Model now {heket_config.MODEL_FILE}")
+    reload_flag = False
+
+reload_config()
 
 # ==== DB SETUP ====
 os.makedirs(heket_config.DATA_DIR, exist_ok=True)
@@ -27,7 +51,8 @@ CREATE TABLE IF NOT EXISTS detections (
     processed TEXT,
     species TEXT,
     confidence REAL,
-    file TEXT
+    file TEXT,
+    labeled TEXT
 )
 """)
 conn.commit()
@@ -69,7 +94,8 @@ def process_file(path):
         species = model.classes_[idx]
         confidence = float(probs[idx])
 
-        if confidence > heket_config.MIN_CONFIDENCE:
+        #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
+        if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
            cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file) VALUES (?, ?, ?, ?, ?)""", (ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path)))
            conn.commit()
            move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
@@ -86,6 +112,7 @@ def process_file(path):
 def start_ffmpeg():
     os.makedirs(heket_config.IN_DIR, exist_ok=True)
     os.makedirs(heket_config.OUT_DIR, exist_ok=True)
+    os.makedirs(heket_config.LABELED_DIR, exist_ok=True)
 
     return subprocess.Popen([
         "ffmpeg", "-nostats",
@@ -108,6 +135,7 @@ def start_web():
 
 # ==== MAIN LOOP ====
 def main():
+    global reload_flag
     while True:
         print("Starting ffmpeg...")
         ffmpeg = start_ffmpeg()
@@ -136,6 +164,9 @@ def main():
                 if web.poll() is not None:
                     print("web died, restarting...")
                     web = start_web()
+
+                if reload_flag:
+                    reload_config()
 
                 time.sleep(2)
 
