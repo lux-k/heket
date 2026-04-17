@@ -18,10 +18,9 @@ Acoustic detection of frog calls from continuous audio streams. This part of the
 
 ## Example output
 
----
-
 ![Heket screenshot](web_assets/screenshot.png)
 
+---
 
 ## Current state
 
@@ -73,7 +72,7 @@ services:
 
 Make a Heket container folder and a Heket data directory. Grab the code.
 ```
-mkdir heket
+mkdir heket heket-data
 cd heket
 git pull https://github.com/lux-k/heket
 ln -s ./heket/docker/dockerfile dockerfile
@@ -87,6 +86,7 @@ echo "HEKET_RTSP_URL=rtsp://admin:password@camera:554/h264Preview_01_sub" >> .en
 
 Build the container and bring it up. Due to the deps, this may take a few minutes.
 ```
+cd ..
 docker compose up heket --build
 ```
 
@@ -123,7 +123,7 @@ Click on the new model to switch to using it. This will classify new clips using
 
 ## Of note
 
-There is no inherent tuning done on the audio to make this a "frog/toad only" system -- that was just the use case I had in mind when I built it. You could, conceivably, train Heket to listen to birds, insects, dogs, your mother-in-law as long as you use the system to
+There is no inherent tuning done on the audio to make this a "frog/toad only" system -- that was just the use case I had in mind when I built it. You could, conceivably, train Heket to listen to birds, insects, dogs or your mother-in-law as long as you use the system to
 label clips.
 
 ---
