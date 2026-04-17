@@ -2,7 +2,7 @@
 
 ![Heket log](web_assets/heket_logo_small.png)
 
-Acoustic detection of frog calls from continuous audio streams.
+Acoustic detection of frog calls from continuous audio streams. This part of the [Turtle Pond](https://turtlepond.us) suite.
 
 ---
 
