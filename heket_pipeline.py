@@ -4,7 +4,7 @@ import subprocess
 import sqlite3
 import librosa
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import joblib
 import shutil
 import sys
@@ -132,11 +132,46 @@ def start_web():
     return subprocess.Popen([
         "python", "heket_web.py",
     ])
-	
+
+def do_maintenance():
+    print("Time to do maintenance")
+    cutoff = datetime.now() - timedelta(days = 2)
+    search = cutoff.isoformat()[:16]
+    print("Candidates to delete are", search)
+
+    cur = conn.cursor()
+    
+    # find the closet record.. bear in mind.. if the pipeline is run sporadically, this might fail..
+    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{search}%"])
+
+    rows = cur.fetchall()
+    if len(rows) > 0:
+        detection_id = rows[0][0]
+        buff = 50 #keeps 50 clips around any review events
+
+        # select records to delete if:
+        #   they are old enough
+        #   they are unlabeled
+        #   they are non frogs OR they are very low confidence frogs
+        cur.execute(f"""SELECT d.id, d.file FROM detections d WHERE d.id <= ? AND labeled is null and
+            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
+            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
+        rows = cur.fetchall()
+        for r in rows:
+            #delete all the files
+            #delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
+            print("Delete " + os.path.join(heket_config.OUT_DIR, r[1]))
+
+#        cur.execute(f"""delete FROM detections d WHERE d.id <= ? AND labeled is null and
+#            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
+#            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
 
 # ==== MAIN LOOP ====
 def main():
     global reload_flag
+    sleep_time = 2
+    maintenance_offset = 3600
+    maintenance_time = 0
     while True:
         print("Starting ffmpeg...")
         ffmpeg = start_ffmpeg()
@@ -169,16 +204,17 @@ def main():
                 if reload_flag:
                     reload_config()
 
-                time.sleep(2)
+                if time.time() > maintenance_time:
+                    do_maintenance()
+                    maintenance_time = time.time() + maintenance_offset
+
+                time.sleep(sleep_time)
 
         finally:
             print("Stopping...")
             ffmpeg.terminate()
             web.terminate()
             break
-
-        time.sleep(2)
-
 
 if __name__ == "__main__":
     main()
