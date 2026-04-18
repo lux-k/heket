@@ -40,16 +40,26 @@ def ensure_column(conn, table, column, col_type):
     if column not in cols:
         print(f"Adding column {column} to {table}")
         cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-        conn.commit()
     else:
         print(f"Column {column} already exists")
 
 def get_db():
     return sqlite3.connect(heket_config.DB_FILE)
 
-CONN = get_db()
-ensure_column(CONN, "detections", "labeled", "TEXT")
-CONN.close()
+def db_setup():
+    CONN = get_db()
+    ensure_column(CONN, "detections", "labeled", "TEXT")
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        detection_id integer,
+        recorded TEXT
+    )
+    """)
+    CONN.commit()
+    CONN.close()
+
+db_setup()
 
 app = Flask(__name__)
 
@@ -136,7 +146,7 @@ def index():
     SELECT id, recorded, species, confidence, file
     FROM detections
     WHERE confidence > {heket_config.CONF_IFFY_MIN} and confidence < {heket_config.CONF_IFFY_MAX} and labeled is null and file not like \"recording%\"
-    ORDER BY confidence DESC
+    ORDER BY confidence asc
     LIMIT {limit}
     """)
 
@@ -211,18 +221,18 @@ def index():
     html += "<form method=\"POST\" action=\"review_manual\">Time: <input name=\"time\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Create</button></form>"
     
     html += "</td><td valign=\"top\"><h1>Model</h1>"
-    html += f"<ul><h2>Current Model</h2><ul><span class=\"accent\">{Path(heket_config.MODEL_FILE).name}</span></ul></ul>"
-    html += "<ul><h2>Custom Models <form style=\"display: inline;\" method=\"POST\" action=\"model_reload\"><button type=\"submit\">&#10227;</button></form></h2><ul>"
+    html += f"<ul><h2>Current</h2><ul><span class=\"accent\">{Path(heket_config.MODEL_FILE).name}</span></ul></ul>"
+    html += "<ul><h2>Available <form style=\"display: inline;\" method=\"POST\" action=\"model_reload\"><button type=\"submit\">&#10227;</button></form></h2><ul>"
     if len(CUSTOM_MODELS) == 0:
         html += "<i>none</i>"
     else:
         for m in CUSTOM_MODELS:
             html += f"<a href=\"model_switch?model={m}\">{m}</a><br>"
             
-    html += "</ul><h2>Train Model</h2><ul>"
+    html += "</ul><h2>Train</h2><ul>"
     html += "<form method=\"POST\" action=\"/model_train\"><button type=\"submit\">Train</button></form></ul>"
     html += "</ul></td><td valign=\"top\">"
-    html += "<h1>Labels</h1><ul><h2>Add Label</h2><ul><form method=\"POST\" action=\"/label_add\">New label: <input name=\"label\"> <button type=\"submit\">Add Label</button></form></ul></ul>"
+    html += "<h1>Labels</h1><ul><h2>Add</h2><ul><form method=\"POST\" action=\"/label_add\">New label: <input name=\"label\"> <button type=\"submit\">Add Label</button></form></ul></ul>"
     html += "</tr></table>"
     conn.close()
 
