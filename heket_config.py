@@ -18,7 +18,7 @@ OUT_DIR = os.path.join(REC_DIR, "processed")
 LABELED_DIR = os.path.join(REC_DIR, "labeled")
 CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
 
-CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.4))
+CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
 CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
 CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
 

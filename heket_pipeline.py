@@ -95,7 +95,8 @@ def process_file(path):
         confidence = float(probs[idx])
 
         #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
-        if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
+        #if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
+        if True:
            cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file) VALUES (?, ?, ?, ?, ?)""", (ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path)))
            conn.commit()
            move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
