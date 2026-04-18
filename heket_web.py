@@ -122,10 +122,10 @@ def index():
         END as animal,
     confidence, file
     FROM detections
-    WHERE confidence > {heket_config.CONF_STRONG} and animal not like \"nonfrog_%\"
+    WHERE confidence > ? and animal not like ?
     ORDER BY recorded DESC
     LIMIT {limit}
-    """)
+    """,[heket_config.CONF_STRONG, "nonfrog_%"])
 
     rows = cur.fetchall()
 
@@ -145,10 +145,10 @@ def index():
     cur.execute(f"""
     SELECT id, recorded, species, confidence, file
     FROM detections
-    WHERE confidence > {heket_config.CONF_IFFY_MIN} and confidence < {heket_config.CONF_IFFY_MAX} and labeled is null and file not like \"recording%\"
+    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
     ORDER BY confidence asc
     LIMIT {limit}
-    """)
+    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
 
     rows = cur.fetchall()
     for r in rows:
@@ -167,10 +167,10 @@ def index():
         END as animal,
     count(*)
     FROM detections
-    WHERE animal not like \"nonfrog_%\"
+    WHERE animal not like ?
     GROUP BY animal
     ORDER BY count(*) DESC
-    """)
+    """,["nonfrog_%"])
 
     rows = cur.fetchall()
 
@@ -191,10 +191,10 @@ def index():
         END as animal,
     count(*)
     FROM detections
-    WHERE animal like \"nonfrog_%\"
+    WHERE animal like ?
     GROUP BY animal
     ORDER BY count(*) DESC
-    """)
+    """,["nonfrog_%"])
 
     rows = cur.fetchall()
 
@@ -271,7 +271,7 @@ def label():
     cur = conn.cursor()
 
     # Get existing columns
-    cur.execute("""update detections set labeled = ? where id = ?""", (label, int(rec)))
+    cur.execute("""update detections set labeled = ? where id = ?""", [label, int(rec)])
     conn.commit()
     conn.close()
 
@@ -317,7 +317,6 @@ def model_switch():
 
 @app.route("/review_add", methods=["GET"])
 def review_add():
-
     html = "<h1>Review Noted</h1><ul>&#9989; Thanks for reporting the frog call."
 
     conn = get_db()
@@ -326,14 +325,7 @@ def review_add():
     rows = cur.fetchall()
     detection_id = rows[0][0]
     
-    cur.execute("""
-CREATE TABLE IF NOT EXISTS reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    detection_id integer,
-    recorded TEXT
-)
-""")
-    cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", (int(detection_id), datetime.now().isoformat()))
+    cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, datetime.now().isoformat()])
     conn.commit()
     conn.close()
     
@@ -342,11 +334,11 @@ CREATE TABLE IF NOT EXISTS reviews (
     
 @app.route("/review_process", methods=["GET"])
 def review_process():
-    review_id = request.args["id"]
+    review_id = int(request.args["id"])
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""select detection_id, recorded from reviews where id = ?""", (review_id))
+    cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
     rows = cur.fetchall()
     detection_id = rows[0][0]
     
@@ -355,7 +347,7 @@ def review_process():
 
     html = f"<h1>Review</h1><ul>Reported: {rows[0][1]}" + str(rows[0][0]) + f"<br>Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    cur.execute(f"""SELECT id, recorded, species, confidence, file FROM detections WHERE id >= ? and id <= ? ORDER BY id DESC """, (low,high))
+    cur.execute(f"""SELECT id, recorded, species, confidence, file FROM detections WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
     
     rows = cur.fetchall()
     for r in rows:
@@ -370,11 +362,11 @@ def review_process():
 
 @app.route("/review_delete", methods=["POST"])
 def review_delete():
-    review_id = request.form["id"]
+    review_id = int(request.form["id"])
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""delete from reviews where id = ?""", (review_id))
+    cur.execute("""delete from reviews where id = ?""", [review_id])
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
@@ -385,20 +377,12 @@ def review_manual():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""select id, recorded from detections where recorded like \"{time}%\"""")
+    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{time}%"])
     rows = cur.fetchall()
     html = "<h1>Event Creation</h1><ul>"
     if len(rows) > 0:
         detection_id = rows[0][0]
-     
-        cur.execute("""
-    CREATE TABLE IF NOT EXISTS reviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        detection_id integer,
-        recorded TEXT
-    )
-    """)
-        cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", (int(detection_id), rows[0][1]))
+        cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, rows[0][1]])
         conn.commit()
         html += "&#9989; The event was found and created."
     else:
