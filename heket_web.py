@@ -14,8 +14,6 @@ CUSTOM_MODELS = []
 ALERTS = []
 ALERTS_CHECKED = 0
 
-heket_config.save_alert("⚠️ Audio likely missing or silent")
-
 def get_db():
     return sqlite3.connect(heket_config.DB_FILE)
 

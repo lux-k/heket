@@ -39,7 +39,7 @@ def reload_config():
 
 reload_config()
 
-AUDIO_CHECK = 0
+AUDIO_CHECK = 50
 
 # ==== DB SETUP ====
 os.makedirs(heket_config.DATA_DIR, exist_ok=True)
@@ -166,14 +166,12 @@ def do_maintenance():
             (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
             d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
         rows = cur.fetchall()
-        print("Deleted", len(rows), "old files")
+        print("Deleting", len(rows), "old files")
         for r in rows:
             #delete all the files
             delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
-
-        cur.execute(f"""delete FROM detections d WHERE d.id <= ? AND labeled is null and
-            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
-            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
+            cur.execute("delete from detections where id = ?", [r[0]])
+        conn.commit()
 
 # ==== MAIN LOOP ====
 def main():
@@ -220,7 +218,8 @@ def main():
                     maintenance_time = time.time() + maintenance_offset
 
                 time.sleep(sleep_time)
-
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
         finally:
             print("Stopping...")
             ffmpeg.terminate()
