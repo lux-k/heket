@@ -8,7 +8,6 @@ import joblib
 import heket_config
 from datetime import datetime
 
-
 DATASET_PATH = heket_config.LABELED_DIR
 
 def extract_features(file):

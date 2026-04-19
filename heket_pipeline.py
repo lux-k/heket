@@ -39,6 +39,8 @@ def reload_config():
 
 reload_config()
 
+AUDIO_CHECK = 0
+
 # ==== DB SETUP ====
 os.makedirs(heket_config.DATA_DIR, exist_ok=True)
 conn = sqlite3.connect(heket_config.DB_FILE)
@@ -59,7 +61,14 @@ conn.commit()
 
 # ==== FEATURE EXTRACTION ====
 def extract_features(file):
+    global AUDIO_CHECK
     y, sr = librosa.load(file, sr=16000)
+    AUDIO_CHECK += 1
+    if AUDIO_CHECK >= 50:
+        if np.mean(np.abs(y)) < 0.001:
+            heket_config.save_alert("⚠️ Audio likely missing or silent")
+        AUDIO_CHECK = 0
+        
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
     return np.mean(mfcc, axis=1)
 
@@ -135,7 +144,7 @@ def start_web():
 
 def do_maintenance():
     print("Time to do maintenance")
-    cutoff = datetime.now() - timedelta(days = 2)
+    cutoff = datetime.now() - timedelta(days = 3)
     search = cutoff.isoformat()[:16]
     print("Candidates to delete are", search)
 
@@ -157,14 +166,14 @@ def do_maintenance():
             (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
             d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
         rows = cur.fetchall()
+        print("Deleted", len(rows), "old files")
         for r in rows:
             #delete all the files
-            #delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
-            print("Delete " + os.path.join(heket_config.OUT_DIR, r[1]))
+            delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
 
-#        cur.execute(f"""delete FROM detections d WHERE d.id <= ? AND labeled is null and
-#            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
-#            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
+        cur.execute(f"""delete FROM detections d WHERE d.id <= ? AND labeled is null and
+            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
+            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
 
 # ==== MAIN LOOP ====
 def main():
@@ -194,11 +203,13 @@ def main():
                 # check if ffmpeg died
                 if ffmpeg.poll() is not None:
                     print("ffmpeg died, restarting...")
+                    heket_config.save_alert("⚠️ Audio recording process died")
                     ffmpeg = start_ffmpeg()
 
                 # check if web died
                 if web.poll() is not None:
                     print("web died, restarting...")
+                    heket_config.save_alert("⚠️ Web app failed")
                     web = start_web()
 
                 if reload_flag:

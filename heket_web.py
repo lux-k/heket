@@ -1,4 +1,5 @@
-from flask import Flask, send_from_directory, request, redirect, url_for
+from flask import Flask, send_from_directory, request, redirect, url_for, flash, get_flashed_messages
+import time
 import sqlite3
 import heket_config
 import os
@@ -6,11 +7,17 @@ import shutil
 from pathlib import Path
 import subprocess
 import signal
-from datetime import datetime
-
+from datetime import datetime, timedelta
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
+ALERTS = []
+ALERTS_CHECKED = 0
+
+heket_config.save_alert("⚠️ Audio likely missing or silent")
+
+def get_db():
+    return sqlite3.connect(heket_config.DB_FILE)
 
 def update_labels():
     global LABEL_CANDS
@@ -25,6 +32,16 @@ def update_models():
     else:
         CUSTOM_MODELS = []
 
+def update_alerts():
+    global ALERTS
+    global ALERTS_CHECKED
+    
+    if ALERTS_CHECKED < time.time() + 60:
+        ALERTS = heket_config.get_alerts()
+        if ALERTS:
+            Path(heket_config.ALERT_FILE).unlink(missing_ok=True)
+        ALERTS_CHECKED = time.time()
+        
 update_labels()
 update_models()
 print("Labels: ", LABEL_CANDS)
@@ -43,9 +60,6 @@ def ensure_column(conn, table, column, col_type):
     else:
         print(f"Column {column} already exists")
 
-def get_db():
-    return sqlite3.connect(heket_config.DB_FILE)
-
 def db_setup():
     CONN = get_db()
     ensure_column(CONN, "detections", "labeled", "TEXT")
@@ -62,8 +76,11 @@ def db_setup():
 db_setup()
 
 app = Flask(__name__)
+app.secret_key = "super secret key"
 
 def make_page(title = "Home", content = ""):
+    global ALERTS
+    update_alerts()
     html = f"<html><head><title>Heket v{heket_config.VERSION}: {title}</title>"
     html += """
 <script>
@@ -76,17 +93,31 @@ function labelClip(file, label) {
         location.reload(); // or remove row dynamically
     });
 }
+setTimeout(() => {{
+    const t = document.getElementById("toast");
+    if (t) t.style.display = "none";
+}}, 5000);
 </script>
 <link rel="stylesheet" href="web_assets/style.css">
 </head><body>
 """    
+    messages = get_flashed_messages()
+    messages[:0] = ALERTS
+  
+    if messages:
+        html += f"<div id=\"toast\">"
+        for m in messages:
+            html += f"{m}<br>"
+        html += "</div>"
+        
     html += "<div class=\"floater\"><form method=\"GET\" action=\"review_add\"><button style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></form></div>"
     url = url_for("index")
     html += f"<center><a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a></center><br>"
     html += content
     html += "<br><center><div style=\"margin-bottom: 20px\">"
     html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
-    html += "</div></center></body></html>"
+    html += "</div></center>"
+    html += "</body></html>"
     return html
 
 def make_label_form(rec = None, file = None, route = None):
@@ -275,7 +306,7 @@ def label():
     conn.commit()
     conn.close()
 
-    
+    flash("Recording labeled")
     if route is None:
         return redirect(url_for("index"))
     else:
@@ -292,11 +323,15 @@ def label_add():
     os.makedirs( os.path.join(heket_config.LABELED_DIR, label), exist_ok=True)
 
     update_labels()
+    
+    flash("Label added")
     return redirect(url_for("index"))
 
 @app.route("/model_reload", methods=["POST"])
 def model_reload():
     update_models()
+    
+    flash("Model list reloaded")
     return redirect(url_for("index"))
 
 @app.route("/model_switch", methods=["GET"])
@@ -312,7 +347,8 @@ def model_switch():
     
     signal_pipeline()
     heket_config.reload()
-   
+
+    flash("Model switched")
     return redirect(url_for("index"))
 
 @app.route("/review_add", methods=["GET"])
@@ -347,16 +383,17 @@ def review_process():
 
     html = f"<h1>Review</h1><ul>Reported: {rows[0][1]}" + str(rows[0][0]) + f"<br>Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    cur.execute(f"""SELECT id, recorded, species, confidence, file FROM detections WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
+    cur.execute(f"""SELECT id, recorded, species, confidence, file, labeled FROM detections WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
     
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
+        if r[5] is not None:
+            html += f" &#x2192; {r[5]}"
         html += make_label_form( rec = r[0], file = r[4], route = request.full_path )
         html += "</li><br>"
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
     html += "</ul>"
-
 
     return make_page(title = "Review noted", content = html)
 
@@ -369,6 +406,8 @@ def review_delete():
     cur.execute("""delete from reviews where id = ?""", [review_id])
     conn.commit()
     conn.close()
+
+    flash("Event deleted")
     return redirect(url_for("index"))
 
 @app.route("/review_manual", methods=["POST"])

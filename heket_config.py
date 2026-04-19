@@ -25,6 +25,8 @@ CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 SEGMENT_TIME = 15
 
+ALERT_FILE = os.path.join(DATA_DIR, "alerts.txt")
+
 def reload():
     global MODEL_FILE
     global DATA_DIR
@@ -56,3 +58,22 @@ print(f"   Strong: {CONF_STRONG}")
 print(f" Iffy Min: {CONF_IFFY_MIN}")
 print(f" Iffy Max: {CONF_IFFY_MAX}")
 
+def save_alert(msg = ""):
+    global ALERT_FILE
+    if msg not in get_alerts():
+        with open(ALERT_FILE, "a") as f:
+            print(msg, file=f)
+            print(msg)
+    else:
+        print("Dupe alert:", msg)
+
+def get_alerts():
+    global ALERT_FILE
+    ALERTS = []
+    if Path(ALERT_FILE).exists():
+        with open(ALERT_FILE, "r") as f:
+            for line in f:
+                l = line.strip()
+                if len(l):
+                    ALERTS.append(l)
+    return ALERTS
