@@ -105,6 +105,17 @@ If it works here, it can work anywhere.
 
 ---
 
+## Events
+
+Let's say you hear a frog croaking right now. Click the "Frog Calling" button in the top, right part of the user interface. This will create an event; essentially a window of sound clips in front of and behind the time you clicked the button. The idea is that you can verify
+that the frog was heard and detected correctly. If not, you can relabel the appropriately clips so they'll be used when you rebuild the model later.
+
+Additionally, there is an option to manually create an event. If, for example, you remember that at 9:45pm last night a frog was calling but you weren't near tech.
+
+Event windows protect recordings from being deleted until the event itself is deleted.
+
+---
+
 ## Tuning
 
 As mentioned, this model is trained on a very small number of frog samples. Those frogs may or may not be present in your yard and may not sound the same with your environment (yard noise, microphone, etc.) Because of this, tuning is required.

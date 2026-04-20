@@ -115,6 +115,10 @@ setTimeout(() => {{
 }}, 5000);
 </script>
 <link rel="stylesheet" href="web_assets/style.css">
+<link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/web_assets/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/web_assets/icons/favicon-16x16.png">
+<link rel="manifest" href="/web_assets/icons/site.webmanifest">
 </head><body>
 """    
     messages = get_flashed_messages()
