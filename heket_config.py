@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-VERSION = 0.03
+VERSION = 0.04
 
 RTSP_URL = os.getenv("HEKET_RTSP_URL","rtsp://admin:password@192.168.100.1:554/h264Preview_01_sub")
 
@@ -17,6 +17,7 @@ IN_DIR = os.path.join(REC_DIR, "unprocessed")
 OUT_DIR = os.path.join(REC_DIR, "processed")
 LABELED_DIR = os.path.join(REC_DIR, "labeled")
 CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
+UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 
 CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
 CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))

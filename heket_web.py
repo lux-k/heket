@@ -2,17 +2,22 @@ from flask import Flask, send_from_directory, request, redirect, url_for, flash,
 import time
 import sqlite3
 import heket_config
+import heket_common
 import os
 import shutil
 from pathlib import Path
 import subprocess
 import signal
 from datetime import datetime, timedelta
+import tempfile
+import re
+import json
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
 ALERTS = []
 ALERTS_CHECKED = 0
+TRAINING = None
 
 def get_db():
     return sqlite3.connect(heket_config.DB_FILE)
@@ -30,9 +35,22 @@ def update_models():
     else:
         CUSTOM_MODELS = []
 
+def check_training():
+    global ALERTS_CHECKED
+    global TRAINING
+    
+    if TRAINING is not None and TRAINING.poll() is not None:
+        #training finish
+        heket_config.save_alert("Model training finished")
+        ALERTS_CHECKED = 0
+        TRAINING = None
+        update_models()    
+
 def update_alerts():
     global ALERTS
     global ALERTS_CHECKED
+    
+    check_training()
     
     if ALERTS_CHECKED < time.time() + 60:
         ALERTS = heket_config.get_alerts()
@@ -118,8 +136,17 @@ setTimeout(() => {{
     html += "</body></html>"
     return html
 
+def make_label_select():
+    global LABEL_CANDS
+    html = f"<select name=\"label\">"
+    html += f"<option></option>"
+    for label in LABEL_CANDS:
+        html += f"<option>{label}</option>"
+    html += "</select> "
+    return html
+    
 def make_label_form(rec = None, file = None, route = None):
-    html = "<form method=\"POST\" action=\"/label\">"
+    html = "<form method=\"POST\" action=\"/label_apply\">"
     html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
     html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
     html += f"<input type=\"hidden\" name=\"file\" value=\"{file}\">"
@@ -127,17 +154,15 @@ def make_label_form(rec = None, file = None, route = None):
     if route is not None:
         html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
     
-    html += f"<select name=\"label\">"
-    html += f"<option></option>"
-    for label in LABEL_CANDS:
-        html += f"<option>{label}</option>"
-    html += "</select> "
+    html += make_label_select()
     html += "<button type=\"submit\">Label</button>"
     html += "</form>"
     return html
 
 @app.route("/")
 def index():
+    check_training()
+    
     conn = get_db()
     cur = conn.cursor()
     
@@ -261,8 +286,15 @@ def index():
     html += "</ul><h2>Train</h2><ul>"
     html += "<form method=\"POST\" action=\"/model_train\"><button type=\"submit\">Train</button></form></ul>"
     html += "</ul></td><td valign=\"top\">"
-    html += "<h1>Labels</h1><ul><h2>Add</h2><ul><form method=\"POST\" action=\"/label_add\">New label: <input name=\"label\"> <button type=\"submit\">Add Label</button></form></ul></ul>"
-    html += "</tr></table>"
+    html += "<h1>Labels</h1><ul><h2>Add</h2><ul><form method=\"POST\" action=\"/label_add\">New label: <input name=\"label\"> <button type=\"submit\">Add Label</button></form></ul>"
+    html += "<h2>Supply</h2><ul><form method=\"POST\" action=\"/label_supply\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"file\"><br>start at <input style=\"width: 40px\" name=\"start\" value=\"0\"> seconds as "
+    html += make_label_select() + " <button type=\"submit\">Upload</button></form></ul>"
+
+    html += "<h2>Test</h2><ul><form method=\"POST\" action=\"/label_test\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"file\"><br>"
+    html += "start at <input style=\"width: 40px\" name=\"start\" value=\"0\"> seconds <button type=\"submit\">Upload</button></form></ul>"
+    
+    html += "</ul>"
+    html += "</td></tr></table>"
     conn.close()
 
     return make_page(title = "Dashboard", content = html)
@@ -275,7 +307,7 @@ def assets(filename):
 def files(filename):
     return send_from_directory(heket_config.OUT_DIR, filename)
 
-@app.route("/label", methods=["POST"])
+@app.route("/label_apply", methods=["POST"])
 def label():
     rec = request.form["rec"]
     file = request.form["file"]
@@ -325,6 +357,96 @@ def label_add():
     flash("Label added")
     return redirect(url_for("index"))
 
+@app.route("/label_supply", methods=["POST"])
+def label_supply():
+    file = request.files["file"]
+    label = request.form["label"]
+    start = request.form["start"]
+    
+    if file.filename == '':
+        flash("Manual labeling needed file")
+        return redirect(url_for("index"))
+        
+    if len(label) == 0:
+        flash("Manual labeling needed label.")
+        return redirect(url_for("index"))
+    
+    if len(start) == 0:
+        flash("Manual labeling needed start.")
+        return redirect(url_for("index"))
+
+    res = prepare_audio_file(file, start)
+
+    if "trimmed_file" in res and res["trimmed_file"] is not None:
+        dst = os.path.join(heket_config.LABELED_DIR, label, Path(res["trimmed_file"]).name)
+        print("Moving " + res["trimmed_file"] + " to " + dst)
+        heket_common.move_file(res["trimmed_file"], dst)
+        flash("Added new sample to " + label)
+    else:
+        flash("Error producing labeled file")
+
+    return redirect(url_for("index"))
+
+@app.route("/label_test", methods=["POST"])
+def label_test():
+    file = request.files["file"]
+    start = request.form["start"]
+    
+    if file.filename == '':
+        flash("Manual labeling needed file")
+        return redirect(url_for("index"))
+        
+    if len(start) == 0:
+        flash("Manual labeling needed start.")
+        return redirect(url_for("index"))
+
+    res = prepare_audio_file(file, start)
+    if "trimmed_file" in res and res["trimmed_file"] is not None:
+        pred_result = None
+        try:
+            out = subprocess.check_output('python heket_predict.py ' + res["trimmed_file"], shell=True).decode('utf-8').splitlines()[-1]
+            pred_result = json.loads(out)
+        except Exception as e:
+            print(f"Error running predictor: {e}")
+
+        heket_common.delete_file(res["trimmed_file"])
+        
+        if pred_result is not None:
+            flash("Prediction is " + pred_result["prediction"] + " at " + str(pred_result["confidence"]))
+        else:
+            flash("Error producing prediction")
+    else:
+        flash("Error producing prediction")
+    return redirect(url_for("index"))
+
+def prepare_audio_file(file, start = 0):
+    os.makedirs(heket_config.UPLOAD_DIR, exist_ok=True)
+    
+    new_filename = os.path.join(heket_config.UPLOAD_DIR, "upload_" + datetime.now().strftime("%Y%m%d_%H%M%S") + Path(file.filename).suffix)
+    
+    print("Uploaded file to", new_filename)
+    file.save(new_filename)
+    trimmed_file = os.path.join(heket_config.UPLOAD_DIR, "trimmed_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".wav")
+    
+    ok = False
+    try:
+        cmd = 'ffmpeg -i ' + new_filename + ' -ss ' + str(start) + ' -t ' + str(heket_config.SEGMENT_TIME) + ' -ac 1 -ar 16000 ' + trimmed_file
+        print("Cmd:", cmd)
+        subprocess.check_output(cmd, shell=True).decode('utf-8')
+        ok = True
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+    if ok and Path(trimmed_file).exists:
+        print("Created trimmed file", trimmed_file)
+    else:
+        heket_common.delete_file(trimmed_file)
+        trimmed_file = None
+
+    heket_common.delete_file(new_filename)
+        
+    return {"trimmed_file": trimmed_file}
+    
 @app.route("/model_reload", methods=["POST"])
 def model_reload():
     update_models()
@@ -365,7 +487,7 @@ def review_add():
     
     html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
     return make_page(title = "Review noted", content = html)
-    
+
 @app.route("/review_process", methods=["GET"])
 def review_process():
     review_id = int(request.args["id"])
@@ -435,7 +557,13 @@ def review_manual():
     
 @app.route("/model_train", methods=["POST"])
 def model_train():
-    subprocess.Popen(["python", "heket_train.py"])
+    global TRAINING
+    if TRAINING is None:
+        TRAINING = subprocess.Popen(["python", "heket_train.py"])
+        flash("Model training kicked off")
+    else:
+        flash("Already training a model")
+        
     return redirect(url_for("index"))
 
 def signal_pipeline():

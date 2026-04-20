@@ -12,6 +12,7 @@ import signal
 
 # ==== CONFIG ====
 import heket_config
+import heket_common
 
 with open(os.path.join(heket_config.DATA_DIR, "heket.pid"), "w") as f:
     f.write(str(os.getpid()))
@@ -79,20 +80,6 @@ def ts_from_filename(path):
     ts_part = fname[-19:-4]   # YYYYMMDD_HHMMSS
     return datetime.strptime(fname, heket_config.FILE_FORMAT)
 
-def delete_file(path):
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass  # already gone, no big deal
-    except Exception as e:
-        print(f"Error deleting {path}: {e}")
-
-def move_file(src, dst):
-    try:
-        shutil.move(src, dst)
-    except Exception as e:
-        print(f"Error moving {src} → {dst}: {e}")
-		
 # ==== CLASSIFY + STORE ====
 def process_file(path):
     try:
@@ -108,15 +95,15 @@ def process_file(path):
         if True:
            cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file) VALUES (?, ?, ?, ?, ?)""", (ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path)))
            conn.commit()
-           move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
+           heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
         else:
-           delete_file(path)
+           heket_common.delete_file(path)
 
         print(f"{path} | {species} ({confidence:.2f})")
 
     except Exception as e:
         print(f"Error processing {path}: {e}")
-        delete_file(path)
+        heket_common.delete_file(path)
 
 # ==== START FFMPEG ====
 def start_ffmpeg():
@@ -169,14 +156,14 @@ def do_maintenance():
         print("Deleting", len(rows), "old files")
         for r in rows:
             #delete all the files
-            delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
+            heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
             cur.execute("delete from detections where id = ?", [r[0]])
         conn.commit()
 
 # ==== MAIN LOOP ====
 def main():
     global reload_flag
-    sleep_time = 2
+    sleep_time = 8
     maintenance_offset = 3600
     maintenance_time = 0
     while True:
