@@ -132,9 +132,10 @@ setTimeout(() => {{
         
     html += "<div class=\"floater\"><form method=\"GET\" action=\"review_add\"><button style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></form></div>"
     url = url_for("index")
-    html += f"<center><a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a></center><br>"
+    html +="<div style=\"width: 100%; margin-bottom: 20px; text-align: center;\">"
+    html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a></div><br>"
     html += content
-    html += "<br><center><div style=\"margin-bottom: 20px\">"
+    html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
     html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += "</body></html>"
@@ -186,8 +187,10 @@ def index():
     """,[heket_config.CONF_STRONG, "nonfrog_%"])
 
     rows = cur.fetchall()
+    html = ""
+    html += "<div class=\"maingrid\">"
 
-    html = "<table cellspacing=\"5\" width=\"100%\"><tr><td width=\"33%\" valign=\"top\">"
+    html += "<div class=\"maincard\">"
     html += "<h1>Strong Frog Detections</h1><ul>"
 
     for r in rows:
@@ -198,7 +201,10 @@ def index():
         html += "</li><br>"
 
     html += "</ul>"
-    html += "</td><td width=\"33%\" valign=\"top\"><h1>Iffy Detections</h1>"
+    html += "</div>"
+    
+    html += "<div class=\"maincard\">"
+    html += "<h1>Iffy Detections</h1><ul>"
 
     cur.execute(f"""
     SELECT id, recorded, species, confidence, file
@@ -215,7 +221,10 @@ def index():
         html += "</li><br>"
 
     html += "</ul>"
-    html += "</td><td width=\"33%\" valign=\"top\"><h1>Detections by Species</h1><ul>"
+    html += "</div>"
+
+    html += "<div class=\"maincard\">"
+    html += "<h1>Detections by Species</h1><ul>"
     
     cur.execute(f"""
     SELECT 
@@ -261,8 +270,9 @@ def index():
     else:
         for r in rows:
             html += f"<li>{r[0]} — {r[1]}</li>"    
-    html += "</td></tr><tr>"
-    
+
+    html += "</div>"
+    html += "<div class=\"maincard\">"
 
     cur.execute(f"""SELECT id, recorded from reviews order by id desc""")
 
@@ -278,7 +288,11 @@ def index():
     html += "</ul></ul><ul><h2>Create</h2>"
     html += "<form method=\"POST\" action=\"review_manual\">Time: <input name=\"time\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Create</button></form>"
     
-    html += "</td><td valign=\"top\"><h1>Model</h1>"
+    html += "</ul></ul>"
+    html += "</div>"
+
+    html += "<div class=\"maincard\">"
+    html += "<h1>Model</h1>"
     html += f"<ul><h2>Current</h2><ul><span class=\"accent\">{Path(heket_config.MODEL_FILE).name}</span></ul></ul>"
     html += "<ul><h2>Available <form style=\"display: inline;\" method=\"POST\" action=\"model_reload\"><button type=\"submit\">&#10227;</button></form></h2><ul>"
     if len(CUSTOM_MODELS) == 0:
@@ -289,7 +303,10 @@ def index():
             
     html += "</ul><h2>Train</h2><ul>"
     html += "<form method=\"POST\" action=\"/model_train\"><button type=\"submit\">Train</button></form></ul>"
-    html += "</ul></td><td valign=\"top\">"
+    html += "</ul>"
+    html += "</div>"
+
+    html += "<div class=\"maincard\">"
     html += "<h1>Labels</h1><ul><h2>Add</h2><ul><form method=\"POST\" action=\"/label_add\">New label: <input name=\"label\"> <button type=\"submit\">Add Label</button></form></ul>"
     html += "<h2>Supply</h2><ul><form method=\"POST\" action=\"/label_supply\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"file\"><br>start at <input style=\"width: 40px\" name=\"start\" value=\"0\"> seconds as "
     html += make_label_select() + " <button type=\"submit\">Upload</button></form></ul>"
@@ -298,7 +315,8 @@ def index():
     html += "start at <input style=\"width: 40px\" name=\"start\" value=\"0\"> seconds <button type=\"submit\">Upload</button></form></ul>"
     
     html += "</ul>"
-    html += "</td></tr></table>"
+    html += "</div>"
+    html += "</div>"
     conn.close()
 
     return make_page(title = "Dashboard", content = html)
@@ -486,16 +504,17 @@ def review_add():
     detection_id = rows[0][0]
     
     cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, datetime.now().isoformat()])
+    cur.execute("""SELECT last_insert_rowid()""")
+    rows = cur.fetchall()
+    review_id = rows[0][0]
     conn.commit()
     conn.close()
     
     html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
+    html += review_page(review_id)
     return make_page(title = "Review noted", content = html)
 
-@app.route("/review_process", methods=["GET"])
-def review_process():
-    review_id = int(request.args["id"])
-
+def review_page(review_id):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
@@ -518,6 +537,12 @@ def review_process():
         html += "</li><br>"
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
     html += "</ul>"
+    return html
+
+@app.route("/review_process", methods=["GET"])
+def review_process():
+    review_id = int(request.args["id"])
+    html = review_page(review_id)
 
     return make_page(title = "Review noted", content = html)
 
