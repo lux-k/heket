@@ -14,7 +14,6 @@ RUN mkdir /app/web_assets
 COPY ./heket/web_assets/* /app/web_assets
 COPY ./heket/requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
-COPY ./.env /app/
 
 RUN chmod +x /app/*.sh
 

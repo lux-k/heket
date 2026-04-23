@@ -44,17 +44,16 @@ source heket-env/bin/activate
 git clone https://github.com/lux-k/heket
 cd heket
 pip install -r requirements.txt
-echo "HEKET_RTSP_URL=rtsp://admin:password@192.168.100.1:554/stream" > .env
 python heket_pipeline.py
 ```
 
-You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
 ---
 
 ## Docker setup
 
-Go to where ever you keep your Docker files, e.g. /opt
+Go to where you keep your Docker files, e.g. /opt
 
 docker-compose.yml
 ```
@@ -78,17 +77,13 @@ git pull https://github.com/lux-k/heket
 ln -s ./heket/docker/dockerfile dockerfile
 ```
 
-Configure the basics for Heket
-```
-echo "HEKET_DATA_DIR=/data" >> .env
-echo "HEKET_RTSP_URL=rtsp://admin:password@camera:554/h264Preview_01_sub" >> .env
-```
-
 Build the container and bring it up. Due to the deps, this may take a few minutes.
 ```
 cd ..
 docker compose up heket --build
 ```
+
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
 ---
 

@@ -26,16 +26,21 @@ def handle_reload(signum, frame):
 signal.signal(signal.SIGUSR1, handle_reload)
 
 # ==== LOAD MODEL ====
-model = None
+model = joblib.load(heket_config.MODEL_FILE)
 
 def reload_config():
     global model
     global reload_flag
+
     print("Reloading config")
-    print(f"Model was {heket_config.MODEL_FILE}")
+    m1 = heket_config.MODEL_FILE
+    
     heket_config.reload()
-    model = joblib.load(heket_config.MODEL_FILE)
-    print(f"Model now {heket_config.MODEL_FILE}")
+
+    if m1 != heket_config.MODEL_FILE:
+        model = joblib.load(heket_config.MODEL_FILE)
+        print(f"Changed from model file {m1} to {heket_config.MODEL_FILE}")
+
     reload_flag = False
 
 reload_config()
@@ -110,6 +115,9 @@ def start_ffmpeg():
     os.makedirs(heket_config.IN_DIR, exist_ok=True)
     os.makedirs(heket_config.OUT_DIR, exist_ok=True)
     os.makedirs(heket_config.LABELED_DIR, exist_ok=True)
+
+    if len(heket_config.RTSP_URL) == 0:
+        return None
 
     return subprocess.Popen([
         "ffmpeg", "-nostats",
@@ -186,7 +194,11 @@ def main():
                     process_file(path)
 
                 # check if ffmpeg died
-                if ffmpeg.poll() is not None:
+                if ffmpeg is None:
+                    print("No RTSP source is configured.")
+                    heket_config.save_alert("⚠️ No audio source configured")
+                    ffmpeg = start_ffmpeg()
+                elif ffmpeg.poll() is not None:
                     print("ffmpeg died, restarting...")
                     heket_config.save_alert("⚠️ Audio recording process died")
                     ffmpeg = start_ffmpeg()
@@ -198,7 +210,14 @@ def main():
                     web = start_web()
 
                 if reload_flag:
+                    rtsp_url = heket_config.RTSP_URL
+                    
                     reload_config()
+                    
+                    #if the rtsp stream changed, kill ffmpeg.. let loop restart it
+                    if heket_config.RTSP_URL != rtsp_url:
+                        if ffmpeg is not None:
+                            ffmpeg.terminate()
 
                 if time.time() > maintenance_time:
                     do_maintenance()
@@ -209,7 +228,8 @@ def main():
             print(f"An unexpected error occurred: {e}")
         finally:
             print("Stopping...")
-            ffmpeg.terminate()
+            if ffmpeg is not None:
+                ffmpeg.terminate()
             web.terminate()
             break
 

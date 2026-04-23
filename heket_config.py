@@ -1,48 +1,66 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
+
+VERSION = 0.05
 
 load_dotenv()
 
-VERSION = 0.04
+DATA_DIR = None
 
-RTSP_URL = os.getenv("HEKET_RTSP_URL","rtsp://admin:password@192.168.100.1:554/h264Preview_01_sub")
+# docker envs default to /data otherwise expect a directory in path
+if Path("/.dockerenv").exists():
+    DATA_DIR = "/data"
+else:
+    DATA_DIR = "data"
 
-DATA_DIR = os.getenv("HEKET_DATA_DIR", "data")
+# you can override the defaults with this env variable
+DATA_DIR = os.getenv("HEKET_DATA_DIR", DATA_DIR)
+CONFIG_FILE = os.path.join(DATA_DIR, "heket.config")
+
+# these runtime values are reloadable
+MODEL_FILE = None
+RTSP_URL = None
+
+CONF_STRONG = None
+CONF_IFFY_MIN = None
+CONF_IFFY_MAX = None
+
+# the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
-MODEL_FILE = os.getenv("HEKET_MODEL_FILE", os.path.join("models", "frog_model.pkl"))
+CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
+ALERT_FILE = os.path.join(DATA_DIR, "alerts.txt")
 
 REC_DIR = os.getenv("HEKET_REC_DIR", os.path.join(DATA_DIR, "recordings"))
 IN_DIR = os.path.join(REC_DIR, "unprocessed")
 OUT_DIR = os.path.join(REC_DIR, "processed")
 LABELED_DIR = os.path.join(REC_DIR, "labeled")
-CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
 UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
-
-CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
-CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
-CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
 
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 SEGMENT_TIME = 15
 
-ALERT_FILE = os.path.join(DATA_DIR, "alerts.txt")
-
 def reload():
+    global CONFIG_FILE
     global MODEL_FILE
-    global DATA_DIR
-    load_dotenv()
-    MODEL_FILE = os.getenv("HEKET_MODEL_FILE", MODEL_FILE)
-    
-    model_file = os.path.join(DATA_DIR, "current_model.txt")
-    if Path(model_file).exists():
-        print("There is a current model file in the data directory, that overrides everything else.")
-        with open(model_file) as f:
-            MODEL_FILE = f.read()
+    global RTSP_URL
+
+    global CONF_STRONG
+    global CONF_IFFY_MIN
+    global CONF_IFFY_MAX
+
+    load_dotenv(CONFIG_FILE, override=True)
+
+    MODEL_FILE = os.getenv("HEKET_MODEL_FILE", os.path.join("models", "frog_model.pkl"))
+    RTSP_URL = os.getenv("HEKET_RTSP_URL","")
+
+    CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
+    CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
+    CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
 
 reload()
 
-print("Heket: Frog Call Listener")
+print("Heket: Frog Call Listener", VERSION)
 print()
 print("Data:")
 print(f"      DB: {DB_FILE}")
@@ -58,6 +76,13 @@ print("Confidence:")
 print(f"   Strong: {CONF_STRONG}")
 print(f" Iffy Min: {CONF_IFFY_MIN}")
 print(f" Iffy Max: {CONF_IFFY_MAX}")
+
+def save_config_value(name, value):
+    global CONFIG_FILE
+    cf = Path(CONFIG_FILE)
+    cf.touch(exist_ok=True)
+
+    set_key(dotenv_path=cf, key_to_set=name, value_to_set=value)
 
 def save_alert(msg = ""):
     global ALERT_FILE

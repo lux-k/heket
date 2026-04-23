@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import tempfile
 import re
 import json
+from dotenv import load_dotenv, set_key
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -136,7 +137,7 @@ setTimeout(() => {{
     html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
-    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
+    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += "</body></html>"
     return html
@@ -166,6 +167,8 @@ def make_label_form(rec = None, file = None, route = None):
 
 @app.route("/")
 def index():
+    if len(heket_config.RTSP_URL) == 0:
+        return redirect(url_for("setup"))
     check_training()
     
     conn = get_db()
@@ -483,9 +486,7 @@ def model_switch():
     if len(model) == 0:
         return redirect(url_for("index"))
     
-    model = os.path.join(heket_config.CUSTOM_MODEL_DIR, model)
-    with open(os.path.join(heket_config.DATA_DIR, "current_model.txt"), "w") as f:
-        f.write( model )
+    heket_config.save_config_value("HEKET_MODEL_FILE",os.path.join(heket_config.CUSTOM_MODEL_DIR, model))
     
     signal_pipeline()
     heket_config.reload()
@@ -582,7 +583,40 @@ def review_manual():
         
     return make_page(title = "Manual review creation", content = html)
     
-#    return redirect(url_for("index"))
+@app.route("/setup", methods=["GET"])
+def setup():
+    html = "<h1>Setup Heket</h1>"
+    html += "<ul>"
+    html += "<form action=\"setup_save\" method=\"POST\">"
+    html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
+    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"100\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
+    html += f"<tr><td>Confidence Strong:</td><td><input name=\"CONF_STRONG\" size=\"5\" value=\"{heket_config.CONF_STRONG}\"></td></tr>"
+    html += f"<tr><td>Iffy Min:</td><td><input name=\"CONF_IFFY_MIN\" size=\"5\" value=\"{heket_config.CONF_IFFY_MIN}\"></td></tr>"
+    html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
+    html += "</table><br>"
+    html += "<button type=\"submit\">Save</button>"
+    html += "</form>"
+    html += "</ul>"
+
+    return make_page(title = "Setup", content = html)
+
+@app.route("/setup_save", methods=["POST"])
+def setup_save():
+    rtsp_url = request.form["RTSP_URL"]
+    conf_strong = request.form["CONF_STRONG"]
+    iffy_min = request.form["CONF_IFFY_MIN"]
+    iffy_max = request.form["CONF_IFFY_MAX"]
+    
+    heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
+    heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
+    heket_config.save_config_value("HEKET_CONF_IFFY_MIN",iffy_min)
+    heket_config.save_config_value("HEKET_CONF_IFFY_MAX",iffy_max)
+
+    signal_pipeline()
+    heket_config.reload()
+
+    flash("Configuration saved")
+    return redirect(url_for("index"))
     
 @app.route("/model_train", methods=["POST"])
 def model_train():
