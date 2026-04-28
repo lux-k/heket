@@ -155,7 +155,6 @@ def make_label_form(rec = None, file = None, route = None):
     html = "<form method=\"POST\" action=\"/label_apply\">"
     html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
     html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
-    html += f"<input type=\"hidden\" name=\"file\" value=\"{file}\">"
     
     if route is not None:
         html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
@@ -335,7 +334,6 @@ def files(filename):
 @app.route("/label_apply", methods=["POST"])
 def label():
     rec = request.form["rec"]
-    file = request.form["file"]
     label = request.form["label"]
     route = None
     if "route" in request.form:
@@ -346,16 +344,27 @@ def label():
 
     print(f"Labeling {rec} as {label}")
 
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""select labeled, file from detections where id = ?""", [int(rec)])
+    rows = cur.fetchall()
+    #this sample was previous labeled... delete the old recording
+    #so the labels stay clean
+    file = rows[0][1]
+    
+    if rows[0][0] is not None:
+        del_file = os.path.join(heket_config.LABELED_DIR, rows[0][0], file)
+        print("Deleted previously labeled file:", del_file)
+        heket_common.delete_file( del_file )
+
     src = Path(os.path.join(heket_config.OUT_DIR, file))
     dst = Path(os.path.join(heket_config.LABELED_DIR, label, file))
     print(f"Copy {src} to {dst}")
 
     if not dst.exists():
         shutil.copy(src, dst)
-
-    conn = get_db()
-    cur = conn.cursor()
-
+        
     # Get existing columns
     cur.execute("""update detections set labeled = ? where id = ?""", [label, int(rec)])
     conn.commit()
@@ -534,7 +543,12 @@ def review_page(review_id):
         html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
         if r[5] is not None:
             html += f" &#x2192; {r[5]}"
-        html += make_label_form( rec = r[0], file = r[4], route = request.full_path )
+        route = request.full_path
+        #rewrite "frog button" pages to review pages so it doesn't keep creating
+        #events
+        if "review_process" not in route:
+            route = url_for("review_process") + "?id=" + str(review_id)
+        html += make_label_form( rec = r[0], file = r[4], route = route )
         html += "</li><br>"
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
     html += "</ul>"
@@ -574,13 +588,24 @@ def review_manual():
         cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, rows[0][1]])
         conn.commit()
         html += "&#9989; The event was found and created."
+
+        cur.execute("""SELECT last_insert_rowid()""")
+        rows = cur.fetchall()
+        review_id = rows[0][0]
+        conn.commit()
+        conn.close()
+        
+        html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
+        html += review_page(review_id)
+        return make_page(title = "Review noted", content = html)
+
     else:
         html += "&#128683; The database had no recordings at that time. Double check your input."
     
     html += "</ul>"
     
     conn.close()
-        
+       
     return make_page(title = "Manual review creation", content = html)
     
 @app.route("/setup", methods=["GET"])
