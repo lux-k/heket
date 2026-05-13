@@ -165,3 +165,22 @@ hr {
 		grid-template-columns: repeat(1, 1fr)
 	}
 }
+
+.detection-item {
+	display: inline;
+}
+
+#spectrogram-preview {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    border: 1px solid #444;
+    background: black;
+    padding: 4px;
+    z-index: 1000;
+}
+
+#spectrogram-preview img {
+    width: 500px;
+    display: block;
+}

@@ -1,5 +1,6 @@
 import shutil
 import os
+import heket_config
 
 def delete_file(path):
     try:

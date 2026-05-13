@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.06
+VERSION = 0.07
 
 load_dotenv()
 
@@ -21,6 +21,9 @@ CONFIG_FILE = os.path.join(DATA_DIR, "heket.config")
 # these runtime values are reloadable
 MODEL_FILE = None
 RTSP_URL = None
+MODEL_LEVEL = None
+SAMPLE_RATE = 0
+SEGMENT_TIME = 0
 
 CONF_STRONG = None
 CONF_IFFY_MIN = None
@@ -38,12 +41,15 @@ LABELED_DIR = os.path.join(REC_DIR, "labeled")
 UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
-SEGMENT_TIME = 15
+
 
 def reload():
     global CONFIG_FILE
     global MODEL_FILE
     global RTSP_URL
+    global MODEL_LEVEL
+    global SAMPLE_RATE
+    global SEGMENT_TIME
 
     global CONF_STRONG
     global CONF_IFFY_MIN
@@ -53,6 +59,9 @@ def reload():
 
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", os.path.join("models", "frog_model.pkl"))
     RTSP_URL = os.getenv("HEKET_RTSP_URL","")
+    MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "simple")
+    SAMPLE_RATE = int(os.getenv("HEKET_SAMPLE_RATE", 16000))
+    SEGMENT_TIME = int(os.getenv("HEKET_SEGMENT_TIME", 15))
 
     CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
     CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
@@ -65,6 +74,7 @@ print()
 print("Data:")
 print(f"      DB: {DB_FILE}")
 print(f"   Model: {MODEL_FILE}")
+print(f"ModelLvl: {MODEL_LEVEL}")
 print()
 print("Recordings:")
 print(f"   RTSP: {RTSP_URL}")

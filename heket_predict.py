@@ -4,19 +4,15 @@ import joblib
 import sys
 import heket_config
 import json
+import heket_classifier
 
-def extract_features(file):
-    y, sr = librosa.load(file, sr=16000)
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-    return np.mean(mfcc, axis=1)
 
-model = joblib.load(heket_config.MODEL_FILE)
-
+model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
 file = sys.argv[1]
-features = extract_features(file).reshape(1, -1)
 
-prediction = model.predict(features)[0]
-probs = model.predict_proba(features)[0]
+features = model.extract_features_from_file(file)
 
-print(json.dumps( {"prediction": prediction, "confidence": max(probs)} ))
+species, confidence = model.predict(features)
+
+print(json.dumps( {"prediction": species, "confidence": f"{confidence:.2g}"} ))
 sys.exit(0)

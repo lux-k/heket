@@ -13,6 +13,7 @@ import signal
 # ==== CONFIG ====
 import heket_config
 import heket_common
+import heket_classifier
 
 with open(os.path.join(heket_config.DATA_DIR, "heket.pid"), "w") as f:
     f.write(str(os.getpid()))
@@ -26,7 +27,7 @@ def handle_reload(signum, frame):
 signal.signal(signal.SIGUSR1, handle_reload)
 
 # ==== LOAD MODEL ====
-model = joblib.load(heket_config.MODEL_FILE)
+model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
 
 def reload_config():
     global model
@@ -38,7 +39,7 @@ def reload_config():
     heket_config.reload()
 
     if m1 != heket_config.MODEL_FILE:
-        model = joblib.load(heket_config.MODEL_FILE)
+        model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
         print(f"Changed from model file {m1} to {heket_config.MODEL_FILE}")
 
     reload_flag = False
@@ -68,15 +69,14 @@ conn.commit()
 # ==== FEATURE EXTRACTION ====
 def extract_features(file):
     global AUDIO_CHECK
-    y, sr = librosa.load(file, sr=16000)
+    y, sr = librosa.load(file, sr=heket_config.SAMPLE_RATE)
     AUDIO_CHECK += 1
     if AUDIO_CHECK >= 50:
         if np.mean(np.abs(y)) < 0.001:
             heket_config.save_alert("⚠️ Audio likely missing or silent")
         AUDIO_CHECK = 0
-        
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-    return np.mean(mfcc, axis=1)
+
+    return model.extract_features_from_audio(y, sr)
 
 def ts_from_filename(path):
     fname = os.path.basename(path)
@@ -89,12 +89,7 @@ def ts_from_filename(path):
 def process_file(path):
     try:
         features = extract_features(path)
-        probs = model.predict_proba([features])[0]
-
-        idx = probs.argmax()
-        species = model.classes_[idx]
-        confidence = float(probs[idx])
-
+        species, confidence = model.predict(features)
         #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
         #if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
         if True:
@@ -125,7 +120,7 @@ def start_ffmpeg():
         "-i", heket_config.RTSP_URL,
         "-vn",
         "-acodec", "pcm_s16le",
-        "-ar", "16000",
+        "-ar", str(heket_config.SAMPLE_RATE),
         "-f", "segment",
         "-segment_time", str(heket_config.SEGMENT_TIME),
         "-reset_timestamps", "1",
@@ -174,6 +169,8 @@ def main():
     sleep_time = 8
     maintenance_offset = 3600
     maintenance_time = 0
+    last_file = time.time()
+    quiet_seconds = 20
     while True:
         print("Starting ffmpeg...")
         ffmpeg = start_ffmpeg()
@@ -192,16 +189,36 @@ def main():
                         continue
 
                     process_file(path)
+                    last_file = time.time()
 
-                # check if ffmpeg died
+                # ffmpeg checks
+                # first.. unconfigured
                 if ffmpeg is None:
                     print("No RTSP source is configured.")
                     heket_config.save_alert("⚠️ No audio source configured")
                     ffmpeg = start_ffmpeg()
+                # or if it died
                 elif ffmpeg.poll() is not None:
                     print("ffmpeg died, restarting...")
                     heket_config.save_alert("⚠️ Audio recording process died")
                     ffmpeg = start_ffmpeg()
+
+                # or if it's hung
+                if time.time() > (last_file + quiet_seconds):
+                    if ffmpeg is not None:
+                        heket_config.save_alert("⚠️ No new audio files for 1 minute; restarting audio capture")
+                        ffmpeg.terminate()
+
+                        try:
+                            ffmpeg.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            print("ffmpeg would not terminate cleanly; killing...")
+                            ffmpeg.kill()
+                            ffmpeg.wait()
+                        
+                        # reset the time to allow 
+                        last_file = time.time()
+
 
                 # check if web died
                 if web.poll() is not None:

@@ -1,4 +1,4 @@
-from flask import Flask, send_from_directory, request, redirect, url_for, flash, get_flashed_messages
+from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages
 import time
 import sqlite3
 import heket_config
@@ -13,6 +13,7 @@ import tempfile
 import re
 import json
 from dotenv import load_dotenv, set_key
+import heket_classifier
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -32,7 +33,7 @@ def update_models():
     
     cm_dir = Path(heket_config.CUSTOM_MODEL_DIR)
     if cm_dir.is_dir():
-        CUSTOM_MODELS = sorted([p.name for p in cm_dir.iterdir() if str(p).endswith(".pkl")], reverse=True)
+        CUSTOM_MODELS = sorted([p.name for p in cm_dir.iterdir() if str(p).endswith(".pkl") or str(p).endswith(".keras")], reverse=True)
     else:
         CUSTOM_MODELS = []
 
@@ -114,6 +115,9 @@ setTimeout(() => {{
     const t = document.getElementById("toast");
     if (t) t.style.display = "none";
 }}, 5000);
+
+
+
 </script>
 <link rel="stylesheet" href="web_assets/style.css">
 <link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
@@ -121,6 +125,9 @@ setTimeout(() => {{
 <link rel="icon" type="image/png" sizes="16x16" href="/web_assets/icons/favicon-16x16.png">
 <link rel="manifest" href="/web_assets/icons/site.webmanifest">
 </head><body>
+<div id="spectrogram-preview">
+    <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'">
+</div>
 """    
     messages = get_flashed_messages()
     messages[:0] = ALERTS
@@ -139,6 +146,28 @@ setTimeout(() => {{
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
     html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
+    html += """
+<script>
+const preview = document.getElementById("spectrogram-preview");
+const image = document.getElementById("spectrogram-image");
+
+document
+.querySelectorAll(".detection-item")
+.forEach(row => {
+    row.addEventListener("mouseenter", e => {
+        const eventId = row.dataset.eventId;
+        image.src = "/spectrogram/" + eventId;
+        preview.style.display = "block";
+        preview.style.left = (e.pageX + 20) + "px";
+        preview.style.top = (e.pageY + 30) + "px";
+    });
+
+    row.addEventListener("mouseleave", () => {
+        preview.style.display = "none";
+    });
+});
+</script>
+"""
     html += "</body></html>"
     return html
 
@@ -152,16 +181,22 @@ def make_label_select():
     return html
     
 def make_label_form(rec = None, file = None, route = None):
-    html = "<form method=\"POST\" action=\"/label_apply\">"
-    html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
-    html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
-    
-    if route is not None:
-        html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
-    
-    html += make_label_select()
-    html += "<button type=\"submit\">Label</button>"
-    html += "</form>"
+    found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
+    html = ""
+    if found:
+        html += f"<form method=\"POST\" action=\"/label_apply\">"
+        html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
+        html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
+        html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
+        
+        if route is not None:
+            html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
+        
+        html += make_label_select()
+        html += "<button type=\"submit\">Label</button>"
+        html += "</form>"
+    else:
+        html += "<br>Recording not found."
     return html
 
 @app.route("/")
@@ -464,7 +499,7 @@ def prepare_audio_file(file, start = 0):
     
     ok = False
     try:
-        cmd = 'ffmpeg -i ' + new_filename + ' -ss ' + str(start) + ' -t ' + str(heket_config.SEGMENT_TIME) + ' -ac 1 -ar 16000 ' + trimmed_file
+        cmd = 'ffmpeg -i ' + new_filename + ' -ss ' + str(start) + ' -t ' + str(heket_config.SEGMENT_TIME) + ' -ac 1 -ar ' + str(heket_config.SAMPLE_RATE) + ' ' + trimmed_file
         print("Cmd:", cmd)
         subprocess.check_output(cmd, shell=True).decode('utf-8')
         ok = True
@@ -607,7 +642,27 @@ def review_manual():
     conn.close()
        
     return make_page(title = "Manual review creation", content = html)
-    
+
+@app.route("/spectrogram/<path:id>")
+def spectrogram(id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select file from detections where id = ?""", [int(id)])
+    rows = cur.fetchall()
+    file = None
+    if len(rows) > 0:
+        file = rows[0][0]
+        file = os.path.join(heket_config.OUT_DIR, file)
+        if not os.path.isfile(file):
+            file = None
+
+    conn.close()
+    if file is not None:
+        buf = heket_classifier.generate_spectrogram(file , "" )
+        return send_file(buf, mimetype='image/png')
+    else:
+        return send_from_directory("web_assets", "unavailable.png")
+
 @app.route("/setup", methods=["GET"])
 def setup():
     html = "<h1>Setup Heket</h1>"
@@ -615,9 +670,19 @@ def setup():
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
     html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"100\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
+    html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
+    for h in ["simple", "deltas", "cnn"]:
+        html += "<option"
+        if heket_config.MODEL_LEVEL == h:
+            html += " selected"
+        html += f">{h}</option>"
+    html += "</td></tr>"
+
     html += f"<tr><td>Confidence Strong:</td><td><input name=\"CONF_STRONG\" size=\"5\" value=\"{heket_config.CONF_STRONG}\"></td></tr>"
     html += f"<tr><td>Iffy Min:</td><td><input name=\"CONF_IFFY_MIN\" size=\"5\" value=\"{heket_config.CONF_IFFY_MIN}\"></td></tr>"
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
+    html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
+    html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form>"
@@ -631,12 +696,18 @@ def setup_save():
     conf_strong = request.form["CONF_STRONG"]
     iffy_min = request.form["CONF_IFFY_MIN"]
     iffy_max = request.form["CONF_IFFY_MAX"]
+    model_level = request.form["MODEL_LEVEL"]
+    sample_rate = request.form["SAMPLE_RATE"]
+    segment_len = request.form["SEGMENT_TIME"]
     
     heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
     heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
     heket_config.save_config_value("HEKET_CONF_IFFY_MIN",iffy_min)
     heket_config.save_config_value("HEKET_CONF_IFFY_MAX",iffy_max)
-
+    heket_config.save_config_value("HEKET_MODEL_LEVEL",model_level)
+    heket_config.save_config_value("HEKET_SAMPLE_RATE",sample_rate)
+    heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
+    
     signal_pipeline()
     heket_config.reload()
 
