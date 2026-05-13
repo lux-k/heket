@@ -1,12 +1,13 @@
 FROM python:3.12-slim
 
+RUN apt-get update
+RUN apt-get install -y ffmpeg libsndfile-dev build-essential cmake libedit-dev clang zlib1g-dev
+
 #FROM python:3.12-alpine
 
 #RUN apk add --no-cache ffmpeg ttf-dejavu busybox-extras libsndfile-dev
 #RUN apk add --no-cache build-base cmake llvm20-dev llvm20-static libedit-dev
 #RUN apk add --no-cache zlib-dev clang llvm20-gtest libsndfile
-
-RUN apt-get install -y ffmpeg libsndfile-dev build-essential cmake libedit-dev clang zlib1g-dev
 
 WORKDIR /app
 
