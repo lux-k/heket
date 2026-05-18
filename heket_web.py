@@ -439,7 +439,7 @@ def index():
     html += "<div class=\"maincard\">"
     html += "<h1>Bulk Actions</h1>"
     html += f"<ul><h2>Delete Unlabeled</h2>"
-    html += "<form method=\"POST\" action=\"detections_delete\">Start at <input name=\"start\" placeholder=\"2025-01-01T01:23\"> and end at <input name=\"stop\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Delete</button></form>"
+    html += "<form method=\"POST\" action=\"detections_delete\" onsubmit=\"return confirm('Are you sure you wish to bulk delete?')\">Start at <input name=\"start\" placeholder=\"2025-01-01T01:23\"> and end at <input name=\"stop\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Delete</button></form>"
     
     html += "</div>"
 
