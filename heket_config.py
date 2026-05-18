@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.07
+VERSION = 0.08
 
 load_dotenv()
 
@@ -41,7 +41,7 @@ LABELED_DIR = os.path.join(REC_DIR, "labeled")
 UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
-
+MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
 
 def reload():
     global CONFIG_FILE
@@ -59,7 +59,7 @@ def reload():
 
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", os.path.join("models", "frog_model.pkl"))
     RTSP_URL = os.getenv("HEKET_RTSP_URL","")
-    MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "simple")
+    MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "mfcc_simple")
     SAMPLE_RATE = int(os.getenv("HEKET_SAMPLE_RATE", 16000))
     SEGMENT_TIME = int(os.getenv("HEKET_SEGMENT_TIME", 15))
 

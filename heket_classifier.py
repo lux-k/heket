@@ -6,6 +6,7 @@ from datetime import datetime
 from io import BytesIO
 import librosa.display
 import matplotlib.pyplot as plt
+import re
    
 def load_model_from_file(file):
     if file.endswith(".pkl"):
@@ -13,13 +14,15 @@ def load_model_from_file(file):
         return RandomForestModel(file)
     elif file.endswith(".keras"):
         return CnnModel(file)
+    elif file.startswith("BirdNET"):
+        return BirdNETModel(file)
     else:
         raise NotImplementedError()
 
 def load_model_from_mode(mode):
-    if mode in ["simple","deltas"]:
+    if mode in ["mfcc_simple","mfcc_deltas"]:
         return RandomForestModel(mode=heket_config.MODEL_LEVEL)
-    elif mode in ["cnn"]:
+    elif mode in ["cnn_sg"]:
         return CnnModel(mode=heket_config.MODEL_LEVEL)
     else:
         print("Unknown operating mode", mode)
@@ -83,18 +86,18 @@ class RandomForestModel(HeketModel):
 
         if mode is None:
             if self.model.n_features_in_ == 20:
-                self.mode = "simple"
+                self.mode = "mfcc_simple"
             elif self.model.n_features_in_ == 80:
-                self.mode = "deltas"
+                self.mode = "mfcc_deltas"
         else:
             self.mode = mode
 
         print("Set mode to", self.mode)
             
     def extract_features_from_audio(self, y, sr):
-        if self.mode == "simple":
+        if self.mode == "mfcc_simple":
             return self._extract_features_simple(y, sr)
-        elif self.mode == "deltas":
+        elif self.mode == "mfcc_deltas":
             return self._extract_features_more_details(y, sr)
         else:
             print("Unknown model shape")
@@ -171,11 +174,15 @@ class RandomForestModel(HeketModel):
 class CnnModel(HeketModel):
     label_file = ""
     labels = []
+    mode = "unknown"
     
     def __init__(self, file=None, mode=None):
         from tensorflow import keras
+        
         if file is not None:
             self.file = file
+            if "_sg" in file:
+                mode = "cnn_sg"
             self.model = keras.models.load_model(file)
             self.label_file = self.file.replace(".keras", ".labels")
             with open(self.label_file) as f:
@@ -196,7 +203,11 @@ class CnnModel(HeketModel):
         return species, confidence
 
     def extract_features_from_audio(self, y, sr):
-        return self._extract_features_cnn(y, sr)
+        if self.mode == "cnn_sg":
+            return self._extract_features_cnn(y, sr)
+        else:
+            raise NotImplementedError()
+            return None
 
     def normalize_audio(self, y, sr):
         TARGET_SAMPLES = heket_config.SEGMENT_TIME * sr
@@ -266,7 +277,7 @@ class CnnModel(HeketModel):
         # Train
         model.fit(X, y_encoded, epochs=10, batch_size=16 )
 
-        file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
+        file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
 
         model.save(file)
         label_file = file.replace(".keras", ".labels")
@@ -276,5 +287,103 @@ class CnnModel(HeketModel):
                 f.write(f"{label}\n")
 
         print(f"Model saved as {file}")
+        print(f"Labels saved as {label_file}")    
+        print("Classes:", encoder.classes_)
+        
+class BirdNETModel(HeketModel):
+    label_file = ""
+    labels = []
+    
+    RANDOM = np.random.RandomState(1)
+    
+    def __init__(self, file=None, mode=None):
+        from tensorflow import lite as tflite
+        
+        if file is not None:
+            self.file = file
+            self.model = tflite.Interpreter(model_path=file, num_threads=4)
+            self.input_layer_index = self.model.get_input_details()[0]["index"]
+            self.output_layer_index = self.model.get_output_details()[0]["index"]
+            self.label_file = self.file
+            self.label_file = re.sub(r"_Model_.*$", "_Labels.txt", self.label_file)
+
+            with open(self.label_file) as f:
+                self.labels = [line.strip() for line in f]     
+
+    def predict(self, features):
+        self.model.resize_tensor_input(self.input_layer_index, [len(features), *features[0].shape])
+        self.model.allocate_tensors()
+
+        # Make a prediction (Audio only for now)
+        self.model.set_tensor(self.input_layer_index, np.array(features, dtype="float32"))
+        self.model.invoke()
+        prediction = self.model.get_tensor(self.output_layer_index)
+        for row in prediction:
+            probs = self.softmax(row)
+            idx = np.argmax(probs)
+        
+            print(probs[idx])
+            print(self.labels[idx])
+        
+        return prediction
+        return species, confidence
+        
+    def softmax(self, x):
+        e = np.exp(x - np.max(x))
+        return e / e.sum()
+        
+    def extract_features_from_audio(self, y, sr):
+        return self._extract_features(y, sr)
+
+    def splitSignal(self, sig, rate, seconds, overlap, minlen):
+        """ (from BirdNET-Analyzer)
+        """
+        sig_splits = []
+
+        for i in range(0, len(sig), int((seconds - overlap) * rate)):
+            split = sig[i : i + int(seconds * rate)]
+
+            # End of signal?
+            if len(split) < int(minlen * rate):
+                break
+
+            # Signal chunk too short?
+            if len(split) < int(rate * seconds):
+                split = np.hstack((split, self.noise(split, (int(rate * seconds) - len(split)), 0.5)))
+
+            sig_splits.append(split)
+
+        return sig_splits
+
+    def noise(self, sig, shape, amount=None):
+        """Creates noise. (from BirdNET-Analyzer)
+
+        Creates a noise vector with the given shape.
+
+        Args:
+        sig: The original audio signal.
+        shape: Shape of the noise.
+        amount: The noise intensity.
+
+        Returns:
+        An numpy array of noise with the given shape.
+        """
+        # Random noise intensity
+        if amount == None:
+            amount = self.RANDOM.uniform(0.1, 0.5)
+
+        # Create Gaussian noise
+        try:
+            noise = self.RANDOM.normal(min(sig) * amount, max(sig) * amount, shape)
+        except:
+            noise = np.zeros(shape)
+
+        return noise.astype("float32")
+        
+    def _extract_features(self, y, sr):
+        chunks = self.splitSignal(y, sr, 3, 0, 3)
+        return chunks
+
+    def train(self, source_path):
         print(f"Labels saved as {label_file}")    
         print("Classes:", encoder.classes_)        

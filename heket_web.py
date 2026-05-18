@@ -1,4 +1,4 @@
-from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages
+from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session
 import time
 import sqlite3
 import heket_config
@@ -14,6 +14,7 @@ import re
 import json
 from dotenv import load_dotenv, set_key
 import heket_classifier
+import math
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -199,6 +200,44 @@ def make_label_form(rec = None, file = None, route = None):
         html += "<br>Recording not found."
     return html
 
+def paginate(url, var, page, max_pages):
+    html = ""
+    new_dict = dict(request.args)
+    
+    if var not in new_dict:
+        new_dict[var] = 1
+        
+    html = "Page "
+    if page > 1:
+        new_dict[var] = page - 1
+        html += "<a href=\"" + url_for(url, **new_dict) + "\">&#11207;</a> "
+        
+    html += f"<form style=\"display: inline\" method=\"GET\" action=\"{url_for(url)}\"><input style=\"width: 50px\" name=\"{var}\" value=\"{page}\">"
+    for m in new_dict:
+        if m == var:
+            continue
+        else:
+            html += f"<input name=\"{m}\" value=\"{new_dict[m]}\" type=\"hidden\">"
+            
+    html += "</form> "
+
+    if page < max_pages:
+        new_dict[var] = page + 1
+        html += "<a href=\"" + url_for(url, **new_dict) + "\">&#11208;</a>"
+
+    session[var] = page
+
+    return html
+    
+def args_session_default(var, default):
+    if var in request.args:
+        return request.args.get(var)
+    elif var in session:
+        return session.get(var)
+    else:
+        return default
+    
+    
 @app.route("/")
 def index():
     if len(heket_config.RTSP_URL) == 0:
@@ -208,7 +247,22 @@ def index():
     conn = get_db()
     cur = conn.cursor()
     
+    html = ""
     limit = 5
+    
+    frog_page = int(args_session_default("fp", 1))
+    iffy_page = int(args_session_default("ip", 1))
+
+    cur.execute(f"""
+    SELECT count(*), 
+        CASE 
+            when labeled is null THEN species
+            when labeled is not null then labeled
+        END as animal    
+    FROM detections
+    WHERE confidence > ? and animal not like ?
+    """,[heket_config.CONF_STRONG, "nonfrog_%"])
+    max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute(f"""
     SELECT id, recorded,
@@ -216,47 +270,74 @@ def index():
             when labeled is null THEN species
             when labeled is not null then labeled
         END as animal,
-    confidence, file
+    confidence, file,
+        CASE
+            When labeled is null then 0
+            when labeled is not null then 1
+        end as validated
     FROM detections
     WHERE confidence > ? and animal not like ?
     ORDER BY recorded DESC
-    LIMIT {limit}
-    """,[heket_config.CONF_STRONG, "nonfrog_%"])
+    LIMIT ? offset ?
+    """,[heket_config.CONF_STRONG, "nonfrog_%", limit, (frog_page - 1) * limit])
 
     rows = cur.fetchall()
-    html = ""
     html += "<div class=\"maingrid\">"
 
     html += "<div class=\"maincard\">"
-    html += "<h1>Strong Frog Detections</h1><ul>"
+    html += "<h1>Strong Frog Detections</h1>"
+    html += "<ul>"
 
     for r in rows:
-        html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
+        html += f"<li>"
+        html += f"<a href=\"detection_delete?id={r[0]}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a> " #&#9940;
+        html += f"{r[1]} — {r[2]} ({r[3]:.2f}) "
+        if r[5] == 1:
+            html += "&#9989; "
         html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
         html += make_label_form( rec = r[0], file = r[4] )
         html += "</div>"
-        html += "</li><br>"
-
+        html += "</li>"
+        html += "<br>"
+    html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
     html += "</ul>"
+
+    
     html += "</div>"
     
     html += "<div class=\"maincard\">"
     html += "<h1>Iffy Detections</h1><ul>"
 
     cur.execute(f"""
-    SELECT id, recorded, species, confidence, file
+    SELECT count(*)  
+    FROM detections
+    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
+    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
+    max_page = math.ceil( cur.fetchall()[0][0] / limit )
+
+    cur.execute(f"""
+    SELECT id, recorded, species, confidence, file,
+        CASE
+            When labeled is null then 0
+            when labeled is not null then 1
+        end as validated    
     FROM detections
     WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
     ORDER BY confidence asc
-    LIMIT {limit}
-    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
+    LIMIT ? offset ?
+    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX,limit, (iffy_page - 1) * limit])
 
     rows = cur.fetchall()
     for r in rows:
-        html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
+        html += f"<li>"
+        html += f"{r[1]} — {r[2]} ({r[3]:.2f})"
+        if r[5] == 1:
+            html += "&#9989; "
         html += make_label_form( rec = r[0], file = r[4] )
-        html += "</li><br>"
+        html += "</li>"
+        html += "<br>"
 
+    html += "<li style=\"list-style-type: none;\">" + paginate("index", "ip", iffy_page, max_page) + "</li>"
     html += "</ul>"
     html += "</div>"
 
@@ -353,6 +434,15 @@ def index():
     
     html += "</ul>"
     html += "</div>"
+
+
+    html += "<div class=\"maincard\">"
+    html += "<h1>Bulk Actions</h1>"
+    html += f"<ul><h2>Delete Unlabeled</h2>"
+    html += "<form method=\"POST\" action=\"detections_delete\">Start at <input name=\"start\" placeholder=\"2025-01-01T01:23\"> and end at <input name=\"stop\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Delete</button></form>"
+    
+    html += "</div>"
+
     html += "</div>"
     conn.close()
 
@@ -523,6 +613,80 @@ def model_reload():
     flash("Model list reloaded")
     return redirect(url_for("index"))
 
+@app.route("/detections_delete", methods=["POST"])
+def detections_delete():
+    start = request.form["start"]
+    stop = request.form["stop"]
+
+    start_id = 0
+    stop_id = 0
+    
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{start}%"])
+    rows = cur.fetchall()
+
+    if len(rows) > 0:
+        start_id = rows[0][0]
+
+    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{stop}%"])
+    rows = cur.fetchall()
+
+    if len(rows) > 0:
+        stop_id = rows[0][0]
+
+    if stop_id != 0 and start_id != 0:
+        cur.execute(f"""select id from detections where id >= ? and id <= ? and labeled is null""", [start_id, stop_id])
+        rows = cur.fetchall()
+        
+        recs = []
+       
+        for r in rows:
+            recs.append(r[0])
+
+        detection_delete( recs )
+
+        flash(f"Deleting unlabeled events between {start_id} and {stop_id}")
+    else:
+        flash("Unable to bulk delete; one or more of the parameters aren't present")
+
+    conn.close()
+    return redirect(url_for("index"))
+
+def detection_delete( recs ):
+    conn = get_db()
+    cur = conn.cursor()
+
+    to_delete = []
+    for r in recs:
+        cur.execute(f"""select id, file, labeled from detections where id = ?""", [r])
+        rows = cur.fetchall()
+        if len(rows) > 0:
+            to_delete.append( {"id": rows[0][0], "file": rows[0][1], "labeled": rows[0][2]} )
+
+    for d in to_delete:
+        #delete the labeled file
+        if d["labeled"] is not None:
+            heket_common.delete_file(os.path.join(heket_config.LABELED_DIR, d["labeled"], d["file"]))
+
+        #delete the source file
+        heket_common.delete_file(os.path.join(heket_config.OUT_DIR, d["file"]))
+        
+        #delete db record
+        cur.execute(f"""delete from detections where id = ?""", [d["id"]])
+
+    conn.commit()
+    conn.close()
+         
+@app.route("/detection_delete", methods=["GET"])
+def detection_delete_web():
+    rec = int(request.args["id"])
+    
+    detection_delete([rec])
+    
+    flash("Detection deleted")
+    return redirect(url_for("index"))
+
 @app.route("/model_switch", methods=["GET"])
 def model_switch():
     model = request.args["model"]
@@ -577,7 +741,7 @@ def review_page(review_id):
     for r in rows:
         html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
         if r[5] is not None:
-            html += f" &#x2192; {r[5]}"
+            html += f" &#x2192; {r[5]} &#9989;"
         route = request.full_path
         #rewrite "frog button" pages to review pages so it doesn't keep creating
         #events
@@ -671,11 +835,12 @@ def setup():
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
     html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"100\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
     html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
-    for h in ["simple", "deltas", "cnn"]:
+    for h in heket_config.MODEL_TYPES:
         html += "<option"
         if heket_config.MODEL_LEVEL == h:
             html += " selected"
         html += f">{h}</option>"
+    html += "</select>"
     html += "</td></tr>"
 
     html += f"<tr><td>Confidence Strong:</td><td><input name=\"CONF_STRONG\" size=\"5\" value=\"{heket_config.CONF_STRONG}\"></td></tr>"
