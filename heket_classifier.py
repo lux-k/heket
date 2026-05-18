@@ -182,11 +182,12 @@ class CnnModel(HeketModel):
         if file is not None:
             self.file = file
             if "_sg" in file:
-                mode = "cnn_sg"
+                self.mode = "cnn_sg"
             self.model = keras.models.load_model(file)
             self.label_file = self.file.replace(".keras", ".labels")
             with open(self.label_file) as f:
                 self.labels = [line.strip() for line in f]        
+
 
     def predict(self, features):
         features = np.expand_dims(features, axis=0)
