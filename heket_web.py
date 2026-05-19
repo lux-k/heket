@@ -82,6 +82,7 @@ def ensure_column(conn, table, column, col_type):
 def db_setup():
     CONN = get_db()
     ensure_column(CONN, "detections", "labeled", "TEXT")
+    ensure_column(CONN, "detections", "curated", "INT")
     CONN.cursor().execute("""
     CREATE TABLE IF NOT EXISTS reviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,34 +173,6 @@ document
     html += "</body></html>"
     return html
 
-def make_label_select():
-    global LABEL_CANDS
-    html = f"<select name=\"label\">"
-    html += f"<option></option>"
-    for label in LABEL_CANDS:
-        html += f"<option>{label}</option>"
-    html += "</select> "
-    return html
-    
-def make_label_form(rec = None, file = None, route = None):
-    found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
-    html = ""
-    if found:
-        html += f"<form method=\"POST\" action=\"/label_apply\">"
-        html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
-        html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
-        html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
-        
-        if route is not None:
-            html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
-        
-        html += make_label_select()
-        html += "<button type=\"submit\">Label</button>"
-        html += "</form>"
-    else:
-        html += "<br>Recording not found."
-    return html
-
 def paginate(url, var, page, max_pages):
     html = ""
     new_dict = dict(request.args)
@@ -236,7 +209,70 @@ def args_session_default(var, default):
         return session.get(var)
     else:
         return default
+
+def make_curation_select( current ):
+    html = ""
+    html += "<select name=\"curated\" onchange=\"this.form,submit()\">"
+    html += "<option value=\"\">&#10067;</option>"
+    html += "<option value=\"1\""
+    if current == 1:
+        html += " selected"
+    html += ">&#128077;</option>"
     
+    html += "<option value=\"0\""
+    if current == 0:
+        html += " selected"
+    html += ">&#128078;</option>"
+    html += "</select>"
+    return html
+    
+def make_label_select():
+    global LABEL_CANDS
+    html = f"<select name=\"label\">"
+    html += f"<option></option>"
+    for label in LABEL_CANDS:
+        html += f"<option>{label}</option>"
+    html += "</select> "
+    return html
+    
+def make_label_form(rec = None, file = None, route = None):
+    found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
+    html = ""
+    if found:
+        html += f"<form method=\"POST\" action=\"/label_apply\">"
+        html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
+        html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
+        html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
+        
+        if route is not None:
+            html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
+        
+        html += make_label_select()
+        html += "<button type=\"submit\">Label</button>"
+        html += "</form>"
+    else:
+        html += "<br>Recording not found."
+    return html
+
+def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated ):
+    html = ""
+    html += f"<abbr title=\"Delete detection\"><a href=\"detection_delete?id={id}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a></abbr> " #&#9940;
+    html += f"{recorded} — {animal} ({confidence:.2f}) "
+    html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
+    html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
+    html += make_curation_select(curated) + " "
+    html += "</form>"
+    if labeled == 1:
+        html += "<abbr title=\"Included in training\">&#9989;</abbr> "
+    return html
+
+def make_detection( id, recorded, animal, confidence, file, labeled, curated ):
+    html = ""
+    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated )
+    html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
+    html += make_label_form( rec = id, file = file )
+    html += "</div>"
+    return html
     
 @app.route("/")
 def index():
@@ -274,7 +310,7 @@ def index():
         CASE
             When labeled is null then 0
             when labeled is not null then 1
-        end as validated
+        end as validated, curated
     FROM detections
     WHERE confidence > ? and animal not like ?
     ORDER BY recorded DESC
@@ -290,13 +326,7 @@ def index():
 
     for r in rows:
         html += f"<li>"
-        html += f"<a href=\"detection_delete?id={r[0]}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a> " #&#9940;
-        html += f"{r[1]} — {r[2]} ({r[3]:.2f}) "
-        if r[5] == 1:
-            html += "&#9989; "
-        html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
-        html += make_label_form( rec = r[0], file = r[4] )
-        html += "</div>"
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
         html += "</li>"
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
@@ -320,7 +350,7 @@ def index():
         CASE
             When labeled is null then 0
             when labeled is not null then 1
-        end as validated    
+        end as validated, curated
     FROM detections
     WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
     ORDER BY confidence asc
@@ -330,10 +360,7 @@ def index():
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>"
-        html += f"{r[1]} — {r[2]} ({r[3]:.2f})"
-        if r[5] == 1:
-            html += "&#9989; "
-        html += make_label_form( rec = r[0], file = r[4] )
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
         html += "</li>"
         html += "<br>"
 
@@ -491,7 +518,7 @@ def label():
         shutil.copy(src, dst)
         
     # Get existing columns
-    cur.execute("""update detections set labeled = ? where id = ?""", [label, int(rec)])
+    cur.execute("""update detections set labeled = ?, curated = ?  where id = ?""", [label, 1, int(rec)])
     conn.commit()
     conn.close()
 
@@ -739,7 +766,8 @@ def review_page(review_id):
     
     rows = cur.fetchall()
     for r in rows:
-        html += f"<li>{r[1]} — {r[2]} ({r[3]:.2f})"
+        html += f"<li>"
+        html += f"{r[1]} — {r[2]} ({r[3]:.2f})"
         if r[5] is not None:
             html += f" &#x2192; {r[5]} &#9989;"
         route = request.full_path
@@ -773,6 +801,22 @@ def review_delete():
     flash("Event deleted")
     return redirect(url_for("index"))
 
+@app.route("/curate", methods=["POST"])
+def curate():
+    rec = int(request.form["rec"])
+    curated = None
+    if "curated" in request.form and len(request.form["curated"]) > 0:
+        curated = int(request.form["curated"])
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""update detections set curated = ? where id = ?""", [curated, rec])
+    conn.commit()
+    conn.close()
+
+    flash("Detection curated")
+    return redirect(url_for("index"))
+    
 @app.route("/review_manual", methods=["POST"])
 def review_manual():
     time = request.form["time"]
@@ -884,7 +928,7 @@ def model_train():
     global TRAINING
     if TRAINING is None:
         TRAINING = subprocess.Popen(["python", "heket_train.py"])
-        flash("Model training kicked off")
+        flash("Model training initiated")
     else:
         flash("Already training a model")
         

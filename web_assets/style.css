@@ -184,3 +184,7 @@ hr {
     width: 500px;
     display: block;
 }
+
+abbr {
+	text-decoration: none;
+}
