@@ -188,3 +188,17 @@ hr {
 abbr {
 	text-decoration: none;
 }
+.weather-item {
+	display: inline;
+	width: 1.5em;
+}
+
+#weather {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    border: 1px solid #444;
+    background: white;
+    padding: 4px;
+    z-index: 1000;
+}

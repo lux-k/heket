@@ -1,3 +1,4 @@
+import requests
 import os
 import time
 import subprocess
@@ -29,9 +30,51 @@ signal.signal(signal.SIGUSR1, handle_reload)
 # ==== LOAD MODEL ====
 model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
 
+weather = None
+
+AUDIO_CHECK = 50
+
+# ==== DB SETUP ====
+os.makedirs(heket_config.DATA_DIR, exist_ok=True)
+
+heket_common.db_setup()
+
+conn = heket_common.get_db()
+cur = conn.cursor()
+
+def update_weather():
+    global weather
+    if heket_config.WEATHER_PROVIDER is None or heket_config.WEATHER_PROVIDER == "":
+        weather = None
+    else:
+        if weather is None:
+            weather = {}
+            
+        try:
+            weather["last_update"] = int(time.time())
+            #configure this as an option, eventually
+            weather["update_after"] = weather["last_update"] + 300
+            response = requests.get(heket_config.WEATHER_PROVIDER)
+            cur_weather = response.json()
+            
+            cur.execute("""INSERT INTO weather (recorded, temp_c, humidity, pressure_mb, rain_rate_mm) VALUES (?, ?, ?, ?, ?)""",
+            [   cur_weather["observations"][0]["obsTimeUtc"],
+                cur_weather["observations"][0]["metric"]["temp"],
+                cur_weather["observations"][0]["humidity"],
+                cur_weather["observations"][0]["metric"]["pressure"],
+                cur_weather["observations"][0]["metric"]["precipRate"],
+            ])
+            weather["id"] = cur.lastrowid
+            conn.commit()
+            print("Weather updated")
+        except Exception as e:
+            print(f"An unexpected weather error occurred: {e}")
+            weather = None
+            
 def reload_config():
     global model
     global reload_flag
+    global weather
 
     print("Reloading config")
     m1 = heket_config.MODEL_FILE
@@ -43,28 +86,10 @@ def reload_config():
         print(f"Changed from model file {m1} to {heket_config.MODEL_FILE}")
 
     reload_flag = False
-
+    weather = None
+    update_weather()
+    
 reload_config()
-
-AUDIO_CHECK = 50
-
-# ==== DB SETUP ====
-os.makedirs(heket_config.DATA_DIR, exist_ok=True)
-conn = sqlite3.connect(heket_config.DB_FILE)
-cur = conn.cursor()
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS detections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recorded TEXT,
-    processed TEXT,
-    species TEXT,
-    confidence REAL,
-    file TEXT,
-    labeled TEXT
-)
-""")
-conn.commit()
 
 # ==== FEATURE EXTRACTION ====
 def extract_features(file):
@@ -87,13 +112,17 @@ def ts_from_filename(path):
 
 # ==== CLASSIFY + STORE ====
 def process_file(path):
+    global weather
     try:
         features = extract_features(path)
         species, confidence = model.predict(features)
         #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
         #if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
         if True:
-           cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file) VALUES (?, ?, ?, ?, ?)""", (ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path)))
+           weather_id = None
+           if weather is not None:
+               weather_id = weather["id"]
+           cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id) VALUES (?, ?, ?, ?, ?, ?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id])
            conn.commit()
            heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
         else:
@@ -161,11 +190,13 @@ def do_maintenance():
             #delete all the files
             heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
             cur.execute("delete from detections where id = ?", [r[0]])
+        cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
         conn.commit()
 
 # ==== MAIN LOOP ====
 def main():
     global reload_flag
+    global weather
     sleep_time = 8
     maintenance_offset = 3600
     maintenance_time = 0
@@ -179,6 +210,8 @@ def main():
 
         try:
             while True:
+                if weather is not None and time.time() > weather["update_after"]:
+                    update_weather()
                 files = sorted(os.listdir(heket_config.IN_DIR))
 
                 for f in files:

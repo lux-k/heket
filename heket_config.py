@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.09
+VERSION = 0.10
 
 load_dotenv()
 
@@ -29,6 +29,9 @@ CONF_STRONG = None
 CONF_IFFY_MIN = None
 CONF_IFFY_MAX = None
 
+WEATHER_PROVIDER = None
+WEATHER_UNITS = None
+
 # the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
 CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
@@ -43,6 +46,7 @@ UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
 
+
 def reload():
     global CONFIG_FILE
     global MODEL_FILE
@@ -54,6 +58,8 @@ def reload():
     global CONF_STRONG
     global CONF_IFFY_MIN
     global CONF_IFFY_MAX
+    global WEATHER_PROVIDER
+    global WEATHER_UNITS
 
     load_dotenv(CONFIG_FILE, override=True)
 
@@ -66,7 +72,10 @@ def reload():
     CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
     CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
     CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
-
+    
+    WEATHER_PROVIDER = os.getenv("HEKET_WEATHER_PROVIDER", None)
+    WEATHER_UNITS = os.getenv("HEKET_WEATHER_UNITS", "imperial")
+    
 reload()
 
 print("Heket: Frog Call Listener", VERSION)

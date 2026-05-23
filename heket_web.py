@@ -23,7 +23,8 @@ ALERTS_CHECKED = 0
 TRAINING = None
 
 def get_db():
-    return sqlite3.connect(heket_config.DB_FILE)
+    return heket_common.get_db()
+    sqlite3.connect(heket_config.DB_FILE)
 
 def update_labels():
     global LABEL_CANDS
@@ -66,34 +67,7 @@ update_models()
 print("Labels: ", LABEL_CANDS)
 print("Models: ", CUSTOM_MODELS)
 
-def ensure_column(conn, table, column, col_type):
-    cur = conn.cursor()
-
-    # Get existing columns
-    cur.execute(f"PRAGMA table_info({table})")
-    cols = [row[1] for row in cur.fetchall()]  # row[1] = column name
-
-    if column not in cols:
-        print(f"Adding column {column} to {table}")
-        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-    else:
-        print(f"Column {column} already exists")
-
-def db_setup():
-    CONN = get_db()
-    ensure_column(CONN, "detections", "labeled", "TEXT")
-    ensure_column(CONN, "detections", "curated", "INT")
-    CONN.cursor().execute("""
-    CREATE TABLE IF NOT EXISTS reviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        detection_id integer,
-        recorded TEXT
-    )
-    """)
-    CONN.commit()
-    CONN.close()
-
-db_setup()
+heket_common.db_setup()
 
 app = Flask(__name__)
 app.secret_key = "super secret key"
@@ -130,6 +104,8 @@ setTimeout(() => {{
 <div id="spectrogram-preview">
     <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'">
 </div>
+<div id="weather">
+</div>
 """    
     messages = get_flashed_messages()
     messages[:0] = ALERTS
@@ -152,7 +128,7 @@ setTimeout(() => {{
 <script>
 const preview = document.getElementById("spectrogram-preview");
 const image = document.getElementById("spectrogram-image");
-
+const weather = document.getElementById("weather");
 document
 .querySelectorAll(".detection-item")
 .forEach(row => {
@@ -168,6 +144,23 @@ document
         preview.style.display = "none";
     });
 });
+
+document
+.querySelectorAll(".weather-item")
+.forEach(row => {
+    row.addEventListener("mouseenter", e => {
+        const eventId = row.dataset.eventId;
+        weather.innerHTML = eventId
+        weather.style.display = "block";
+        weather.style.left = (e.pageX + 20) + "px";
+        weather.style.top = (e.pageY + 30) + "px";
+    });
+
+    row.addEventListener("mouseleave", () => {
+        weather.style.display = "none";
+    });
+});
+
 </script>
 """
     html += "</body></html>"
@@ -254,21 +247,64 @@ def make_label_form(rec = None, file = None, route = None):
         html += "<br>Recording not found."
     return html
 
-def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated ):
+def weather_c_to_f( c ):
+    return round((c * 1.8) + 32, 2)    
+
+def weather_mb_to_inhg( mb ):
+    return round(mb * 0.02953, 2)
+
+def make_weather(weather):
+    html = ""
+    #the DB stores metric data
+    #html += "&#127777; "
+    html += "&nbsp;T "
+    if heket_config.WEATHER_UNITS == "imperial":
+        #imperial
+        html += f"{round(weather_c_to_f(weather['temp_c']),0)}&#176; F"
+    else:
+        #metric
+        html += f"{round(weather['temp_c'],0)}&#176; C"
+    
+    html += "<br>"
+    #html += f"&#128167; {round(weather['humidity'],0)} %<br>"
+    html += f"&nbsp;H {round(weather['humidity'],0)} %<br>"
+    
+    #html += "&nbsp;P "
+    html += "&nbsp;P "
+    if heket_config.WEATHER_UNITS == "imperial":
+        #imperial
+        html += f"{weather_mb_to_inhg(weather['pressure_mb'])} inHg"
+    else:
+        #metric
+        html += f"{weather['pressure_mb']} millibars"
+    
+    html += "<br>"
+    if weather["rain_rate_mm"] > 0:
+        html += "&#9748; Raining"
+    else:
+        html += "Not raining"
+    return html
+    
+def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated, weather ):
     html = ""
     html += f"<abbr title=\"Delete detection\"><a href=\"detection_delete?id={id}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a></abbr> " #&#9940;
-    html += f"{recorded} — {animal} ({confidence:.2f}) "
+    html += f"{recorded} "
+    if weather is not None:
+        html += f"<div class=\"weather-item\" data-event-id=\"{make_weather( weather )}\">&#9925;</div>"
+    html += f" — {animal} ({confidence:.2f}) "
     html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
     html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
     html += make_curation_select(curated) + " "
-    html += "</form>"
+    html += "</form> "
     if labeled == 1:
         html += "<abbr title=\"Included in training\">&#9989;</abbr> "
     return html
 
-def make_detection( id, recorded, animal, confidence, file, labeled, curated ):
+def make_detection( id, recorded, animal, confidence, file, labeled, curated, weather = None ):
     html = ""
-    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated )
+    if weather is not None and weather["temp_c"] is None:
+        weather = None
+    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated, weather = weather )
     html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
     html += make_label_form( rec = id, file = file )
     html += "</div>"
@@ -301,7 +337,7 @@ def index():
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute(f"""
-    SELECT id, recorded,
+    SELECT detections.id, detections.recorded,
         CASE 
             when labeled is null THEN species
             when labeled is not null then labeled
@@ -310,10 +346,10 @@ def index():
         CASE
             When labeled is null then 0
             when labeled is not null then 1
-        end as validated, curated
-    FROM detections
+        end as validated, curated, temp_c, humidity, pressure_mb, rain_rate_mm
+    FROM detections left join weather on detections.weather_id = weather.weather_id
     WHERE confidence > ? and animal not like ?
-    ORDER BY recorded DESC
+    ORDER BY detections.recorded DESC
     LIMIT ? offset ?
     """,[heket_config.CONF_STRONG, "nonfrog_%", limit, (frog_page - 1) * limit])
 
@@ -326,7 +362,8 @@ def index():
 
     for r in rows:
         html += f"<li>"
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
+        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather)
         html += "</li>"
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
@@ -663,7 +700,7 @@ def detections_delete():
         stop_id = rows[0][0]
 
     if stop_id != 0 and start_id != 0:
-        cur.execute(f"""select id from detections where id >= ? and id <= ? and labeled is null""", [start_id, stop_id])
+        cur.execute(f"""select id from detections where id >= ? and id <= ? and curated is null and labeled is null""", [start_id, stop_id])
         rows = cur.fetchall()
         
         recs = []
@@ -877,7 +914,7 @@ def setup():
     html += "<ul>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
-    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"100\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
+    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"50\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
     html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
     for h in heket_config.MODEL_TYPES:
         html += "<option"
@@ -892,6 +929,15 @@ def setup():
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
     html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
     html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
+    html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"50\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
+    html += f"<tr><td>Weather Units:</td><td><select name=\"WEATHER_UNITS\">"
+    for h in ["imperial","metric"]:
+        html += "<option"
+        if heket_config.WEATHER_UNITS == h:
+            html += " selected"
+        html += f">{h}</option>"
+    html += "</select>"
+    html += "</td></tr>"
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form>"
@@ -908,6 +954,8 @@ def setup_save():
     model_level = request.form["MODEL_LEVEL"]
     sample_rate = request.form["SAMPLE_RATE"]
     segment_len = request.form["SEGMENT_TIME"]
+    weather_prov = request.form["WEATHER_PROVIDER"]
+    weather_units = request.form["WEATHER_UNITS"]
     
     heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
     heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
@@ -916,6 +964,8 @@ def setup_save():
     heket_config.save_config_value("HEKET_MODEL_LEVEL",model_level)
     heket_config.save_config_value("HEKET_SAMPLE_RATE",sample_rate)
     heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
+    heket_config.save_config_value("HEKET_WEATHER_PROVIDER",weather_prov)
+    heket_config.save_config_value("HEKET_WEATHER_UNITS",weather_units)
     
     signal_pipeline()
     heket_config.reload()
