@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.10
+VERSION = 0.11
 
 load_dotenv()
 
@@ -73,7 +73,7 @@ def reload():
     CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
     CONF_IFFY_MAX = float(os.getenv("HEKET_CONF_IFFY_MAX", 0.8))
     
-    WEATHER_PROVIDER = os.getenv("HEKET_WEATHER_PROVIDER", None)
+    WEATHER_PROVIDER = os.getenv("HEKET_WEATHER_PROVIDER", "")
     WEATHER_UNITS = os.getenv("HEKET_WEATHER_UNITS", "imperial")
     
 reload()

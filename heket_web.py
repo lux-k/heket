@@ -15,6 +15,7 @@ import json
 from dotenv import load_dotenv, set_key
 import heket_classifier
 import math
+from urllib.parse import urlencode
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -205,7 +206,7 @@ def args_session_default(var, default):
 
 def make_curation_select( current ):
     html = ""
-    html += "<select name=\"curated\" onchange=\"this.form,submit()\">"
+    html += "<select name=\"curated\" onchange=\"this.form.submit()\">"
     html += "<option value=\"\">&#10067;</option>"
     html += "<option value=\"1\""
     if current == 1:
@@ -285,28 +286,35 @@ def make_weather(weather):
         html += "Not raining"
     return html
     
-def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated, weather ):
+def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated, weather, route=None ):
     html = ""
-    html += f"<abbr title=\"Delete detection\"><a href=\"detection_delete?id={id}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a></abbr> " #&#9940;
+    extra=""
+    if route is not None:
+        extra="&" + urlencode( {"route": route} )
+    html += f"<abbr title=\"Delete detection\"><a href=\"detection_delete?id={id}{extra}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a></abbr> " #&#9940;
     html += f"{recorded} "
     if weather is not None:
         html += f"<div class=\"weather-item\" data-event-id=\"{make_weather( weather )}\">&#9925;</div>"
-    html += f" — {animal} ({confidence:.2f}) "
+    html += f" — {animal } ({confidence:.2f}) "
+    if labeled is not None and labeled != animal:
+        html += f"&#x2192; {labeled} "
     html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
     html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
     html += make_curation_select(curated) + " "
+    if route is not None:
+        html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
     html += "</form> "
-    if labeled == 1:
+    if labeled is not None:
         html += "<abbr title=\"Included in training\">&#9989;</abbr> "
     return html
 
-def make_detection( id, recorded, animal, confidence, file, labeled, curated, weather = None ):
+def make_detection( id, recorded, animal, confidence, file, labeled, curated, weather=None, route=None ):
     html = ""
     if weather is not None and weather["temp_c"] is None:
         weather = None
-    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated, weather = weather )
+    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated, weather = weather, route=route )
     html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
-    html += make_label_form( rec = id, file = file )
+    html += make_label_form( rec=id, file=file, route=route )
     html += "</div>"
     return html
     
@@ -336,22 +344,23 @@ def index():
     """,[heket_config.CONF_STRONG, "nonfrog_%"])
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
+
+#            CASE 
+#            when labeled is null THEN species
+#            when labeled is not null then labeled
+#        END as animal,
+#        CASE
+#            When labeled is null then 0
+#            when labeled is not null then 1
+#        end as validated
     cur.execute(f"""
     SELECT detections.id, detections.recorded,
-        CASE 
-            when labeled is null THEN species
-            when labeled is not null then labeled
-        END as animal,
-    confidence, file,
-        CASE
-            When labeled is null then 0
-            when labeled is not null then 1
-        end as validated, curated, temp_c, humidity, pressure_mb, rain_rate_mm
+        species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
     FROM detections left join weather on detections.weather_id = weather.weather_id
-    WHERE confidence > ? and animal not like ?
+    WHERE confidence > ? and ((labeled is null and species not like ?) or (labeled is not null and labeled not like ?))
     ORDER BY detections.recorded DESC
     LIMIT ? offset ?
-    """,[heket_config.CONF_STRONG, "nonfrog_%", limit, (frog_page - 1) * limit])
+    """,[heket_config.CONF_STRONG, "nonfrog_%", "nonfrog_%", limit, (frog_page - 1) * limit])
 
     rows = cur.fetchall()
     html += "<div class=\"maingrid\">"
@@ -383,12 +392,8 @@ def index():
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute(f"""
-    SELECT id, recorded, species, confidence, file,
-        CASE
-            When labeled is null then 0
-            when labeled is not null then 1
-        end as validated, curated
-    FROM detections
+    SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
+    FROM detections left join weather on detections.weather_id = weather.weather_id
     WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
     ORDER BY confidence asc
     LIMIT ? offset ?
@@ -427,7 +432,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li>{r[0]} — {r[1]}</li>"    
+            html += f"<li><a href=\"review_class?class={r[0]}\">{r[0]}</a> — {r[1]}</li>"    
 
     html += "</ul>"
     html += "<h1>Non-Frog Detections</h1><ul>"
@@ -451,7 +456,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li>{r[0]} — {r[1]}</li>"    
+            html += f"<li><a href=\"review_class?class={r[0]}\">{r[0]}</a> — {r[1]}</li>"    
 
     html += "</div>"
     html += "<div class=\"maincard\">"
@@ -465,7 +470,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li><a href=\"review_process?id={r[0]}\">{r[1]}</a></li>"    
+            html += f"<li><a href=\"review_event?id={r[0]}\">{r[1]}</a></li>"    
     
     html += "</ul></ul><ul><h2>Create</h2>"
     html += "<form method=\"POST\" action=\"review_manual\">Time: <input name=\"time\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Create</button></form>"
@@ -745,11 +750,17 @@ def detection_delete( recs ):
 @app.route("/detection_delete", methods=["GET"])
 def detection_delete_web():
     rec = int(request.args["id"])
+    route = None
+    if "route" in request.args:
+        route = request.args["route"]
     
     detection_delete([rec])
     
     flash("Detection deleted")
-    return redirect(url_for("index"))
+    if route is None:
+        return redirect(url_for("index"))
+    else:
+        return redirect(route)
 
 @app.route("/model_switch", methods=["GET"])
 def model_switch():
@@ -784,10 +795,10 @@ def review_add():
     conn.close()
     
     html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
-    html += review_page(review_id)
+    html += review_event_page(review_id)
     return make_page(title = "Review noted", content = html)
 
-def review_page(review_id):
+def review_event_page(review_id):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
@@ -797,33 +808,72 @@ def review_page(review_id):
     high = detection_id + int((2 * 60) / heket_config.SEGMENT_TIME)
     low = detection_id - int((5 * 60) / heket_config.SEGMENT_TIME)
 
-    html = f"<h1>Review</h1><ul>Reported: {rows[0][1]}" + str(rows[0][0]) + f"<br>Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
+    html = f"<h1>Review Event</h1><ul>Reported: {rows[0][1]}" + str(rows[0][0]) + f"<br>Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    cur.execute(f"""SELECT id, recorded, species, confidence, file, labeled FROM detections WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
+    cur.execute(f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
     
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>"
-        html += f"{r[1]} — {r[2]} ({r[3]:.2f})"
-        if r[5] is not None:
-            html += f" &#x2192; {r[5]} &#9989;"
         route = request.full_path
         #rewrite "frog button" pages to review pages so it doesn't keep creating
         #events
-        if "review_process" not in route:
-            route = url_for("review_process") + "?id=" + str(review_id)
-        html += make_label_form( rec = r[0], file = r[4], route = route )
+        if "review_event" not in route:
+            route = url_for("review_event") + "?id=" + str(review_id)
+ 
+        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=route)
         html += "</li><br>"
+        
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
     html += "</ul>"
     return html
 
-@app.route("/review_process", methods=["GET"])
-def review_process():
-    review_id = int(request.args["id"])
-    html = review_page(review_id)
+@app.route("/review_class", methods=["GET"])
+def review_class():
+    review_class = request.args["class"]
+    
+    page = None
+    sess_key = "class " + review_class
+    if "page" in request.args:
+        page = int(request.args["page"])
+    elif sess_key in session:
+        page = int(session[sess_key])
+    else:
+        page = 1
 
-    return make_page(title = "Review noted", content = html)
+    session[sess_key] = page
+
+    html = f"<h1>Review Class</h1><ul>"
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""SELECT count(*) FROM detections WHERE (labeled is null and species = ? ) or (labeled = ?) ORDER BY id DESC """, [review_class, review_class])
+    limit = 25
+    max_page = math.ceil( cur.fetchall()[0][0] / limit )
+    
+    cur.execute(f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  
+    WHERE (labeled is null and species = ? ) or (labeled = ?) ORDER BY id DESC LIMIT ? offset ?""", [review_class, review_class, limit, (page - 1) * limit])
+        
+    rows = cur.fetchall()
+    html += "<li style=\"list-style-type: none;\">" + paginate("review_class", "page", page, max_page) + "<br><br></li>"
+    for r in rows:
+        html += f"<li>"
+        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        html += "</li><br>"
+
+    html += "<li style=\"list-style-type: none;\">" + paginate("review_class", "page", page, max_page) + "</li>"
+    html += "</ul>"
+
+    return make_page(title = "Review Class", content = html)
+
+@app.route("/review_event", methods=["GET"])
+def review_event():
+    review_id = int(request.args["id"])
+    html = review_event_page(review_id)
+
+    return make_page(title = "Review Event", content = html)
 
 @app.route("/review_delete", methods=["POST"])
 def review_delete():
@@ -841,6 +891,9 @@ def review_delete():
 @app.route("/curate", methods=["POST"])
 def curate():
     rec = int(request.form["rec"])
+    route = None
+    if "route" in request.form:
+        route = request.form["route"]
     curated = None
     if "curated" in request.form and len(request.form["curated"]) > 0:
         curated = int(request.form["curated"])
@@ -852,7 +905,10 @@ def curate():
     conn.close()
 
     flash("Detection curated")
-    return redirect(url_for("index"))
+    if route is None:
+        return redirect(url_for("index"))
+    else:
+        return redirect(route)
     
 @app.route("/review_manual", methods=["POST"])
 def review_manual():
@@ -914,7 +970,7 @@ def setup():
     html += "<ul>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
-    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"50\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
+    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"75\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
     html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
     for h in heket_config.MODEL_TYPES:
         html += "<option"
@@ -929,7 +985,7 @@ def setup():
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
     html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
     html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
-    html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"50\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
+    html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"75\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
     html += f"<tr><td>Weather Units:</td><td><select name=\"WEATHER_UNITS\">"
     for h in ["imperial","metric"]:
         html += "<option"
