@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.11
+VERSION = 0.12
 
 load_dotenv()
 

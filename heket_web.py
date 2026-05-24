@@ -834,29 +834,76 @@ def review_class():
     review_class = request.args["class"]
     
     page = None
+    labeled = None
+    
     sess_key = "class " + review_class
+    if sess_key not in session or not isinstance(session[sess_key], dict):
+        session[sess_key] = {}
+        
     if "page" in request.args:
         page = int(request.args["page"])
-    elif sess_key in session:
-        page = int(session[sess_key])
+    elif sess_key in session and "page" in session[sess_key]:
+        page = int(session[sess_key]["page"])
     else:
         page = 1
+    
+    if "labeled" in request.args:
+        labeled = request.args["labeled"]
+    elif sess_key in session and "labeled" in session[sess_key]:
+        labeled = session[sess_key]["labeled"]
+    else:
+        labeled = "B"
 
-    session[sess_key] = page
+    session[sess_key]["page"] = page
+    session[sess_key]["labeled"] = labeled
 
     html = f"<h1>Review Class</h1><ul>"
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""SELECT count(*) FROM detections WHERE (labeled is null and species = ? ) or (labeled = ?) ORDER BY id DESC """, [review_class, review_class])
+
+    sql_pages = f"""SELECT count(*) FROM detections WHERE """
+    sql_query = f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_args = []
+
+    if labeled == "Y":
+        sql_query += "labeled = ? "
+        sql_args.append(review_class)
+        sql_pages += "labeled = ? "
+    elif labeled == "N":
+        sql_query += "species = ? and labeled is null "
+        sql_args.append(review_class)
+        sql_pages += "species = ? and labeled is null "
+    else:
+        sql_query += "(labeled is null and species = ? ) or (labeled = ?)"
+        sql_args += [review_class, review_class]
+        sql_pages += "(labeled is null and species = ? ) or (labeled = ?)"
+
     limit = 25
+    cur.execute(sql_pages, sql_args)
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
-    
-    cur.execute(f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  
-    WHERE (labeled is null and species = ? ) or (labeled = ?) ORDER BY id DESC LIMIT ? offset ?""", [review_class, review_class, limit, (page - 1) * limit])
+
+    sql_query += """ORDER BY id DESC LIMIT ? offset ?"""
+    sql_args += [limit, (page - 1) * limit]
+    cur.execute(sql_query, sql_args)
         
     rows = cur.fetchall()
-    html += "<li style=\"list-style-type: none;\">" + paginate("review_class", "page", page, max_page) + "<br><br></li>"
+    
+    filter_html = "<fieldset style=\"width: 150px;\"><legend>  Filters  </legend>"
+    filter_html += f"<form style=\"display: inline\" method=\"GET\"><input type=\"hidden\" name=\"class\" value=\"{review_class}\">Labeled: <select onchange=\"this.form.submit()\" name=\"labeled\">"
+    
+    for opt in ["Yes","No","Both"]:
+        filter_html += f"<option value=\"{opt[0]}\""
+        if labeled == opt[0]:
+            filter_html += " selected"
+        filter_html += f">{opt}</option>"
+    filter_html += "</select></form>" 
+    filter_html += "</fieldset><br>"
+    filter_html += "<li style=\"list-style-type: none;\">" 
+    filter_html += paginate("review_class", "page", page, max_page) + "<br><br>"
+    filter_html += "</li>"
+
+    html += filter_html
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
