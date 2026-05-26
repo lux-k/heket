@@ -979,7 +979,7 @@ def review_manual():
         conn.close()
         
         html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
-        html += review_page(review_id)
+        html += review_event_page(review_id)
         return make_page(title = "Review noted", content = html)
 
     else:
