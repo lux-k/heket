@@ -409,15 +409,18 @@ def index():
     """, [limit, (bout_page - 1) * limit])
 
     rows = cur.fetchall()
-    for r in rows:
-        html += f"<li>"
-        html += f"{r[1]} "
-        if r[3] is None:
-            html += f"since {r[2][:16]}"
-        else:
-            html += f"from {r[2][:16]} until {r[3][:16]}<br>{r[4]} clips ranging from {r[5]:.2f} to {r[6]:.2f}"
-        html += "</li>"
-        html += "<br>"
+    if len(rows) == 0:
+        html += f"<li><i>none</i></li>"
+    else:
+        for r in rows:
+            html += f"<li>"
+            html += f"{r[1]} "
+            if r[3] is None:
+                html += f"since {r[2][:16]}"
+            else:
+                html += f"from {r[2][:16]} until {r[3][:16]}<br>{r[4]} clips ranging from {r[5]:.2f} to {r[6]:.2f}"
+            html += "</li>"
+            html += "<br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "bp", bout_page, max_page) + "</li>"
     html += "</ul>"
