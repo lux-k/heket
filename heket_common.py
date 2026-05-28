@@ -53,7 +53,8 @@ def db_setup():
         file TEXT,
         labeled TEXT,
         curated integer,
-        weather_id integer
+        weather_id integer,
+        bout_id integer
     )
     """)
 
@@ -68,9 +69,25 @@ def db_setup():
     )
     """)
 
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS bouts (
+        bout_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        species TEXT,
+        start_detection_id integer,
+        end_detection_id integer,
+        start_ts text,
+        end_ts text,
+        conf_min real,
+        conf_max real,
+        conf_avg real,
+        clips integer
+    )
+    """)
+
     ensure_column(CONN, "detections", "labeled", "TEXT")
     ensure_column(CONN, "detections", "curated", "INT")
     ensure_column(CONN, "detections", "weather_id", "INT")
-
+    ensure_column(CONN, "detections", "bout_id", "INT")
+    
     CONN.commit()
     CONN.close()

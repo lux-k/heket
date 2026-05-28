@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.12
+VERSION = 0.13
 
 load_dotenv()
 
@@ -46,6 +46,8 @@ UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
 
+BOUT_MIN_CLIPS = 10 #minimum number of clips to open a bout
+BOUT_MAX_SILENT = 600 #seconds a bout can be silent before close
 
 def reload():
     global CONFIG_FILE

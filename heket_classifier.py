@@ -10,7 +10,6 @@ import re
    
 def load_model_from_file(file):
     if file.endswith(".pkl"):
-        #cnn models
         return RandomForestModel(file)
     elif file.endswith(".keras"):
         return CnnModel(file)
@@ -195,7 +194,6 @@ class CnnModel(HeketModel):
         features = features[..., np.newaxis]
 
         probs = self.model.predict(features)[0]
-
         idx = probs.argmax()
 
         species = self.labels[idx]

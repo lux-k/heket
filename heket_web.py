@@ -332,6 +332,7 @@ def index():
     
     frog_page = int(args_session_default("fp", 1))
     iffy_page = int(args_session_default("ip", 1))
+    bout_page = int(args_session_default("bp", 1))
 
     cur.execute(f"""
     SELECT count(*), 
@@ -382,8 +383,8 @@ def index():
     html += "</div>"
     
     html += "<div class=\"maincard\">"
-    html += "<h1>Iffy Detections</h1><ul>"
-
+    html += "<h1>Calling Bouts</h1><ul>"
+    
     cur.execute(f"""
     SELECT count(*)  
     FROM detections
@@ -391,22 +392,34 @@ def index():
     """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
+        # CREATE TABLE IF NOT EXISTS bouts (
+            # bout_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            # species TEXT,
+            # start_detection_id integer,
+            # end_detection_id integer,
+            # start_ts text,
+            # end_ts text,
+            # conf_min real,
+            # conf_max real,
+            # conf_avg real
+            
     cur.execute(f"""
-    SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
-    FROM detections left join weather on detections.weather_id = weather.weather_id
-    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
-    ORDER BY confidence asc
+    SELECT bout_id, species, start_ts, end_ts, clips, conf_min, conf_max from bouts order by bout_id desc
     LIMIT ? offset ?
-    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX,limit, (iffy_page - 1) * limit])
+    """, [limit, (bout_page - 1) * limit])
 
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>"
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
+        html += f"{r[1]} "
+        if r[3] is None:
+            html += f"since {r[2][:16]}"
+        else:
+            html += f"from {r[2][:16]} until {r[3][:16]}<br>{r[4]} clips ranging from {r[5]:.2f} to {r[6]:.2f}"
         html += "</li>"
         html += "<br>"
 
-    html += "<li style=\"list-style-type: none;\">" + paginate("index", "ip", iffy_page, max_page) + "</li>"
+    html += "<li style=\"list-style-type: none;\">" + paginate("index", "bp", bout_page, max_page) + "</li>"
     html += "</ul>"
     html += "</div>"
 
@@ -459,6 +472,36 @@ def index():
             html += f"<li><a href=\"review_class?class={r[0]}\">{r[0]}</a> — {r[1]}</li>"    
 
     html += "</div>"
+    
+    html += "<div class=\"maincard\">"
+    html += "<h1>Iffy Detections</h1><ul>"
+
+    cur.execute(f"""
+    SELECT count(*)  
+    FROM detections
+    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
+    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
+    max_page = math.ceil( cur.fetchall()[0][0] / limit )
+
+    cur.execute(f"""
+    SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
+    FROM detections left join weather on detections.weather_id = weather.weather_id
+    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
+    ORDER BY confidence asc
+    LIMIT ? offset ?
+    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX,limit, (iffy_page - 1) * limit])
+
+    rows = cur.fetchall()
+    for r in rows:
+        html += f"<li>"
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
+        html += "</li>"
+        html += "<br>"
+
+    html += "<li style=\"list-style-type: none;\">" + paginate("index", "ip", iffy_page, max_page) + "</li>"
+    html += "</ul>"
+    html += "</div>"
+    
     html += "<div class=\"maincard\">"
 
     cur.execute(f"""SELECT id, recorded from reviews order by id desc""")
