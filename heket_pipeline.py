@@ -10,6 +10,8 @@ import joblib
 import shutil
 import sys
 import signal
+from urllib.parse import urlsplit, parse_qs
+import requests
 
 # ==== CONFIG ====
 import heket_config
@@ -141,10 +143,24 @@ def bout_increment(species):
         if bouts[species]["bout_id"] is None and bouts[species]["detections"] >= heket_config.BOUT_MIN_CLIPS:
             bout_open(species)
 
+def bout_notify(msg):
+    if heket_config.NOTIFICATION_PROVIDER is not None and len(heket_config.NOTIFICATION_PROVIDER) > 0:
+        o = urlsplit(heket_config.NOTIFICATION_PROVIDER)
+        if o.scheme == "pushover":
+            conf = parse_qs(o.netloc)
+            if "url" not in conf:
+                conf["url"] = "https://api.pushover.net/1/messages.json"
+            try:
+                params = {"token": conf["token"], "user": conf["user"], "message": msg}
+                r = requests.post(conf["url"], json=params)
+                print("posted " + msg + " to pushover")
+            except Exception as e:
+                print("posting to pushover failed - " + str(e))
+    
 def bout_open(species):
     global bouts
     print(species, "calling bout has begun")
-
+    bout_notify("🐸 " + species + " calling bout started")
     cur.execute("""INSERT INTO bouts (species, start_detection_id, start_ts) values (?,?,?)""", [species, bouts[species]["start_id"], bouts[species]["start_time"]])
     bouts[species]["bout_id"] = cur.lastrowid
     

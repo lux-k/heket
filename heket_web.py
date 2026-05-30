@@ -367,7 +367,7 @@ def index():
     html += "<div class=\"maingrid\">"
 
     html += "<div class=\"maincard\">"
-    html += "<h1>Strong Frog Detections</h1>"
+    html += "<h1>Strong Detections</h1>"
     html += "<ul>"
 
     for r in rows:
@@ -378,51 +378,49 @@ def index():
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
     html += "</ul>"
-
     
     html += "</div>"
     
     html += "<div class=\"maincard\">"
-    html += "<h1>Calling Bouts</h1><ul>"
-    
+    html += "<h1>Detection Bouts</h1><ul>"
+    html += "<h2>Review</h2><ul>"
     cur.execute(f"""
     SELECT count(*)  
-    FROM detections
-    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
-    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
+    FROM bouts
+    """)
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
-        # CREATE TABLE IF NOT EXISTS bouts (
-            # bout_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            # species TEXT,
-            # start_detection_id integer,
-            # end_detection_id integer,
-            # start_ts text,
-            # end_ts text,
-            # conf_min real,
-            # conf_max real,
-            # conf_avg real
-            
     cur.execute(f"""
-    SELECT bout_id, species, start_ts, end_ts, clips, conf_min, conf_max from bouts order by bout_id desc
+    SELECT bout_id, species, start_ts, end_ts, clips, conf_min, conf_max from bouts order by start_ts desc
     LIMIT ? offset ?
     """, [limit, (bout_page - 1) * limit])
 
     rows = cur.fetchall()
     if len(rows) == 0:
-        html += f"<li><i>none</i></li>"
+        html += f"<li><i>none</i><br><br></li>"
     else:
         for r in rows:
             html += f"<li>"
-            html += f"{r[1]} "
+            if r[3] is not None:
+                html += f"<abbr title=\"Delete bout\"><a href=\"bout_delete?id={r[0]}\" style=\"color: red\" onclick=\"return confirm('Delete this bout?')\">&#8998;</a></abbr> "
+            html += f"<a href=\"bout_review?bout_id={r[0]}\">{r[1]}</a> "
             if r[3] is None:
                 html += f"since {r[2][:16]}"
             else:
-                html += f"from {r[2][:16]} until {r[3][:16]}<br>{r[4]} clips ranging from {r[5]:.2f} to {r[6]:.2f}"
+                html += f"from {r[2][:16]} until {r[3][:16]}"
+                if r[5] is not None and r[6] is not None:
+                    html += f"<br>{r[4]} detections ranging from {r[5]:.2f} to {r[6]:.2f}"
             html += "</li>"
             html += "<br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "bp", bout_page, max_page) + "</li>"
+    html += "</ul>"
+    
+    html += "<h2>Create</h2><ul>"
+    html += "<form method=\"POST\" action=\"bout_create\">Beginning <input name=\"bout_start\" placeholder=\"2025-01-01T01:23\"> until <input name=\"bout_end\" placeholder=\"2025-01-01T01:23\"><br>for species "
+    html += make_label_select() + "<button type=\"submit\">Create</button></form>"
+    html += "</ul>"
+
     html += "</ul>"
     html += "</div>"
 
@@ -1059,11 +1057,12 @@ def spectrogram(id):
 
 @app.route("/setup", methods=["GET"])
 def setup():
+    long_size = 75
     html = "<h1>Setup Heket</h1>"
     html += "<ul>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
-    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"75\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
+    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"{long_size}\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
     html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
     for h in heket_config.MODEL_TYPES:
         html += "<option"
@@ -1078,7 +1077,7 @@ def setup():
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
     html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
     html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
-    html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"75\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
+    html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"{long_size}\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
     html += f"<tr><td>Weather Units:</td><td><select name=\"WEATHER_UNITS\">"
     for h in ["imperial","metric"]:
         html += "<option"
@@ -1087,6 +1086,9 @@ def setup():
         html += f">{h}</option>"
     html += "</select>"
     html += "</td></tr>"
+    html += f"<tr><td>Notification Provider:</td><td><input name=\"NOTIFICATION_PROVIDER\" size=\"{long_size}\" value=\"{heket_config.NOTIFICATION_PROVIDER}\"></td></tr>"
+    html += f"<tr><td>Bout Miniumum Detections:</td><td><input name=\"BOUT_MIN_CLIPS\" size=\"5\" value=\"{heket_config.BOUT_MIN_CLIPS}\"></td></tr>"
+    html += f"<tr><td>Bout Maximum Silence (s):</td><td><input name=\"BOUT_MAX_SILENT\" size=\"5\" value=\"{heket_config.BOUT_MAX_SILENT}\"></td></tr>"
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form>"
@@ -1105,6 +1107,9 @@ def setup_save():
     segment_len = request.form["SEGMENT_TIME"]
     weather_prov = request.form["WEATHER_PROVIDER"]
     weather_units = request.form["WEATHER_UNITS"]
+    notif_prov = request.form["NOTIFICATION_PROVIDER"]
+    bout_clips = request.form["BOUT_MIN_CLIPS"]
+    bout_silence = request.form["BOUT_MAX_SILENT"]
     
     heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
     heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
@@ -1115,6 +1120,9 @@ def setup_save():
     heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
     heket_config.save_config_value("HEKET_WEATHER_PROVIDER",weather_prov)
     heket_config.save_config_value("HEKET_WEATHER_UNITS",weather_units)
+    heket_config.save_config_value("HEKET_NOTIFICATION_PROVIDER", notif_prov)
+    heket_config.save_config_value("HEKET_BOUT_MIN_CLIPS", bout_clips)
+    heket_config.save_config_value("HEKET_BOUT_MAX_SILENT", bout_silence)
     
     signal_pipeline()
     heket_config.reload()
@@ -1145,6 +1153,178 @@ def signal_pipeline():
 
     except ProcessLookupError:
         print("Heket process not running")    
+
+@app.route("/bout_create", methods=["POST"])
+def bout_create():
+    bout_start = request.form["bout_start"]
+    bout_end = request.form["bout_end"]
+    species = request.form["label"]
+    
+    bout_start_id = None
+    bout_end_id = None
+    
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select min(id) from detections where recorded like ?""", [f"{bout_start}%"])
+    rows = cur.fetchall()
+    if len(rows) > 0:
+        bout_start_id = rows[0][0]
+    else:
+        flash("Bout start time not found")
+        
+    cur.execute(f"""select max(id) from detections where recorded like ?""", [f"{bout_end}%"])
+    rows = cur.fetchall()
+    if len(rows) > 0:
+        bout_end_id = rows[0][0]
+    else:
+        flash("Bout end time not found")
+
+    if bout_start_id is not None and bout_end_id is not None and bout_start_id > bout_end_id:
+        temp = bout_start_id
+        bout_start_id = bout_end_id
+        bout_end_id = temp
+        
+    # so we have the start and end now.. we need the information for the bout
+    cur.execute(f"""select min(recorded), max(recorded), min(confidence), max(confidence), avg(confidence), count(*) 
+        from detections where id >= ? and id <= ? and bout_id is null and ((species = ? and labeled is null) or (labeled = ?))""", [bout_start_id, bout_end_id, species, species])
+    rows = cur.fetchall()
+    if len(rows) > 0:
+        cur.execute(f"""insert into bouts (species, start_detection_id, end_detection_id, start_ts, end_ts, conf_min, conf_max, conf_avg, clips) values (?,?,?,?,?,?,?,?,?)""",[species, bout_start_id, bout_end_id] + list(rows[0]))
+        bout_id = cur.lastrowid
+        cur.execute(f"""update detections set bout_id = ? where  id >= ? and id <= ? and bout_id is null and ((species = ? and labeled is null) or (labeled = ?))""",[bout_id, bout_start_id, bout_end_id, species, species])
+        conn.commit()
+        flash("Bout created")
+    else:
+        flash("No clips found for bout")
+
+    return redirect(url_for("index"))
+
+@app.route("/bout_delete", methods=["GET"])
+def bout_delete():
+    bout_id = int(request.args["id"])
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""update detections set bout_id = null where bout_id = ?""", [bout_id])
+    cur.execute(f"""delete from bouts where bout_id = ?""", [bout_id])
+    conn.commit()
+    flash("Bout deleted")
+
+    return redirect(url_for("index"))
+
+@app.route("/bout_note", methods=["POST"])
+def bout_note():
+    bout_id = int(request.form["bout_id"])
+    note = request.form["note"]
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""update bouts set notes =? where bout_id = ?""", [note, bout_id])
+    conn.commit()
+
+    flash("Bout note saved")
+
+    return redirect(url_for("bout_review",bout_id=bout_id))
+
+@app.route("/bout_review", methods=["GET"])
+def bout_review():
+    bout_id = int(request.args["bout_id"])
+
+    # this is ugly and largely ripped out of the class review
+    # it should probably not be
+    
+    page = None
+    labeled = None
+    
+    sess_key = "bout " + str(bout_id)
+    if sess_key not in session or not isinstance(session[sess_key], dict):
+        session[sess_key] = {}
+        
+    if "page" in request.args:
+        page = int(request.args["page"])
+    elif sess_key in session and "page" in session[sess_key]:
+        page = int(session[sess_key]["page"])
+    else:
+        page = 1
+    
+    if "labeled" in request.args:
+        labeled = request.args["labeled"]
+    elif sess_key in session and "labeled" in session[sess_key]:
+        labeled = session[sess_key]["labeled"]
+    else:
+        labeled = "B"
+
+    session[sess_key]["page"] = page
+    session[sess_key]["labeled"] = labeled
+
+    html = f"<h1>Review Bout</h1><ul>"
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""select notes from bouts where bout_id = ?""",[bout_id])
+    rows = cur.fetchall()
+    html += f"<form method=\"POST\" action=\"bout_note\"><input type=\"hidden\" name=\"bout_id\" value=\"{bout_id}\">"
+    html += "Notes:<br><textarea name=\"note\" rows=\"5\" cols=\"50\">"
+    if rows[0][0] is not None:
+        html += rows[0][0]
+    html += "</textarea> <button type=\"submit\">Save</button>"
+    html += "</form>"
+
+    sql_pages = f"""SELECT count(*) FROM detections WHERE """
+    sql_query = f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_args = []
+
+    if labeled == "Y":
+        sql_query += "labeled is not null "
+        sql_pages += "labeled is not null "
+    elif labeled == "N":
+        sql_query += "labeled is null "
+        sql_pages += "labeled is null "
+    else:
+        sql_query += "species is not null "
+        sql_pages += "species is not null "
+
+    sql_query += "and bout_id = ?"
+    sql_pages += "and bout_id = ?"
+    sql_args += [bout_id]
+
+    limit = 25
+    cur.execute(sql_pages, sql_args)
+    max_page = math.ceil( cur.fetchall()[0][0] / limit )
+
+    sql_query += """ORDER BY id DESC LIMIT ? offset ?"""
+    sql_args += [limit, (page - 1) * limit]
+    cur.execute(sql_query, sql_args)
+        
+    rows = cur.fetchall()
+    
+    filter_html = "<fieldset style=\"width: 150px;\"><legend>  Filters  </legend>"
+    filter_html += f"<form style=\"display: inline\" method=\"GET\"><input type=\"hidden\" name=\"bout_id\" value=\"{bout_id}\">Labeled: <select onchange=\"this.form.submit()\" name=\"labeled\">"
+    
+    for opt in ["Yes","No","Both"]:
+        filter_html += f"<option value=\"{opt[0]}\""
+        if labeled == opt[0]:
+            filter_html += " selected"
+        filter_html += f">{opt}</option>"
+    filter_html += "</select></form>" 
+    filter_html += "</fieldset><br>"
+    filter_html += "<li style=\"list-style-type: none;\">" 
+    filter_html += paginate("bout_review", "page", page, max_page) + "<br><br>"
+    filter_html += "</li>"
+
+    html += filter_html
+    for r in rows:
+        html += f"<li>"
+        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
+        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        html += "</li><br>"
+
+    html += "<li style=\"list-style-type: none;\">" + paginate("bout_review", "page", page, max_page) + "</li>"
+    html += "</ul>"
+
+    return make_page(title = "Review Bout", content = html)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

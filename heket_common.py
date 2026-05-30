@@ -80,7 +80,8 @@ def db_setup():
         conf_min real,
         conf_max real,
         conf_avg real,
-        clips integer
+        clips integer,
+        notes text
     )
     """)
 
@@ -88,6 +89,7 @@ def db_setup():
     ensure_column(CONN, "detections", "curated", "INT")
     ensure_column(CONN, "detections", "weather_id", "INT")
     ensure_column(CONN, "detections", "bout_id", "INT")
+    ensure_column(CONN, "bouts", "notes", "TEXT")
     
     CONN.commit()
     CONN.close()

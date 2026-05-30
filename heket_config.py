@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.13
+VERSION = 0.14
 
 load_dotenv()
 
@@ -31,6 +31,10 @@ CONF_IFFY_MAX = None
 
 WEATHER_PROVIDER = None
 WEATHER_UNITS = None
+NOTIFICATION_PROVIDER = None
+
+BOUT_MIN_CLIPS = None
+BOUT_MAX_SILENT = None
 
 # the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
@@ -46,9 +50,6 @@ UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
 
-BOUT_MIN_CLIPS = 10 #minimum number of clips to open a bout
-BOUT_MAX_SILENT = 600 #seconds a bout can be silent before close
-
 def reload():
     global CONFIG_FILE
     global MODEL_FILE
@@ -62,6 +63,9 @@ def reload():
     global CONF_IFFY_MAX
     global WEATHER_PROVIDER
     global WEATHER_UNITS
+    global NOTIFICATION_PROVIDER
+    global BOUT_MIN_CLIPS
+    global BOUT_MAX_SILENT
 
     load_dotenv(CONFIG_FILE, override=True)
 
@@ -77,6 +81,11 @@ def reload():
     
     WEATHER_PROVIDER = os.getenv("HEKET_WEATHER_PROVIDER", "")
     WEATHER_UNITS = os.getenv("HEKET_WEATHER_UNITS", "imperial")
+
+    BOUT_MIN_CLIPS = int(os.getenv("HEKET_BOUT_MIN_CLIPS", 10))
+    BOUT_MAX_SILENT = int(os.getenv("HEKET_BOUT_MAX_SILENT", 600))
+
+    NOTIFICATION_PROVIDER = os.getenv("HEKET_NOTIFICATION_PROVIDER", "")
     
 reload()
 

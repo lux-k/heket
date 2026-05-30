@@ -5,3 +5,4 @@ librosa
 soundfile
 matplotlib
 tensorflow
+requests
