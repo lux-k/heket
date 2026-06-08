@@ -2,6 +2,8 @@ import shutil
 import os
 import heket_config
 import sqlite3
+import random
+import requests
 
 def delete_file(path):
     try:
@@ -85,6 +87,16 @@ def db_setup():
     )
     """)
 
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS species (
+        species_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        label_name TEXT,
+        latin_name TEXT,
+        common_name TEXT,
+        notes text
+    )
+    """)
+
     ensure_column(CONN, "detections", "labeled", "TEXT")
     ensure_column(CONN, "detections", "curated", "INT")
     ensure_column(CONN, "detections", "weather_id", "INT")
@@ -93,3 +105,32 @@ def db_setup():
     
     CONN.commit()
     CONN.close()
+
+def key_generate():
+    key = ""
+    
+    src = ""
+    for i in range(48, 58):
+        src += chr(i)
+
+    for i in range(65, 127):
+        src += chr(i)
+    
+    src_len = len(src)
+    for i in range(65):
+        spot = random.randint(0,src_len - 1)
+        key += src[spot:spot + 1]
+        
+    return key
+
+def test_key():
+    try:
+        print(heket_config.TURTLEPOND_KEY)
+        response = requests.get(heket_config.TURTLEPOND + "ping", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+    except Exception as e:
+        return False

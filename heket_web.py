@@ -16,12 +16,14 @@ from dotenv import load_dotenv, set_key
 import heket_classifier
 import math
 from urllib.parse import urlencode
+import requests
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
 ALERTS = []
 ALERTS_CHECKED = 0
 TRAINING = None
+NAME_CACHE = {}
 
 def get_db():
     return heket_common.get_db()
@@ -162,6 +164,12 @@ document
     });
 });
 
+document.querySelectorAll('fieldset legend').forEach(legend => {
+  legend.addEventListener('click', () => {
+    // Find the closest parent fieldset and toggle the class
+    legend.closest('fieldset').classList.toggle('collapsed');
+  });
+});
 </script>
 """
     html += "</body></html>"
@@ -285,7 +293,28 @@ def make_weather(weather):
     else:
         html += "Not raining"
     return html
+
+def label_to_name( label ):
+    global NAME_CACHE
     
+    ret_val = None
+    if label in NAME_CACHE:
+        ret_val = NAME_CACHE[label]
+    else:
+        conn = get_db()
+        cur = conn.cursor()
+    
+        cur.execute("SELECT common_name from species where label_name = ?", [label])
+        rows = cur.fetchall()
+        if len(rows) > 0:
+            NAME_CACHE[label] = rows[0][0]
+            ret_val = rows[0][0]
+
+    if ret_val is None:
+        return label
+    else:
+        return ret_val
+        
 def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated, weather, route=None ):
     html = ""
     extra=""
@@ -295,9 +324,9 @@ def make_detection_infoline( id, recorded, animal, confidence, file, labeled, cu
     html += f"{recorded} "
     if weather is not None:
         html += f"<div class=\"weather-item\" data-event-id=\"{make_weather( weather )}\">&#9925;</div>"
-    html += f" — {animal } ({confidence:.2f}) "
+    html += f" — { label_to_name(animal) } ({confidence:.2f}) "
     if labeled is not None and labeled != animal:
-        html += f"&#x2192; {labeled} "
+        html += f"&#x2192; { label_to_name(labeled) } "
     html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
     html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
     html += make_curation_select(curated) + " "
@@ -403,7 +432,7 @@ def index():
             html += f"<li>"
             if r[3] is not None:
                 html += f"<abbr title=\"Delete bout\"><a href=\"bout_delete?id={r[0]}\" style=\"color: red\" onclick=\"return confirm('Delete this bout?')\">&#8998;</a></abbr> "
-            html += f"<a href=\"bout_review?bout_id={r[0]}\">{r[1]}</a> "
+            html += f"<a href=\"bout_review?bout_id={r[0]}\">{label_to_name(r[1])}</a> "
             if r[3] is None:
                 html += f"since {r[2][:16]}"
             else:
@@ -446,7 +475,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li><a href=\"review_class?class={r[0]}\">{r[0]}</a> — {r[1]}</li>"    
+            html += f"<li><a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}</li>"    
 
     html += "</ul>"
     html += "<h1>Non-Frog Detections</h1><ul>"
@@ -470,7 +499,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li><a href=\"review_class?class={r[0]}\">{r[0]}</a> — {r[1]}</li>"    
+            html += f"<li><a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}</li>"    
 
     html += "</div>"
     
@@ -514,7 +543,7 @@ def index():
         html += f"<li><i>none</i></li>"
     else:
         for r in rows:
-            html += f"<li><a href=\"review_event?id={r[0]}\">{r[1]}</a></li>"    
+            html += f"<li><a href=\"review_process?id={r[0]}\">{r[1]}</a></li>"    
     
     html += "</ul></ul><ul><h2>Create</h2>"
     html += "<form method=\"POST\" action=\"review_manual\">Time: <input name=\"time\" placeholder=\"2025-01-01T01:23\"> <button type=\"submit\">Create</button></form>"
@@ -832,9 +861,7 @@ def review_add():
     detection_id = rows[0][0]
     
     cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, datetime.now().isoformat()])
-    cur.execute("""SELECT last_insert_rowid()""")
-    rows = cur.fetchall()
-    review_id = rows[0][0]
+    review_id = cur.lastrowid
     conn.commit()
     conn.close()
     
@@ -862,8 +889,8 @@ def review_event_page(review_id):
         route = request.full_path
         #rewrite "frog button" pages to review pages so it doesn't keep creating
         #events
-        if "review_event" not in route:
-            route = url_for("review_event") + "?id=" + str(review_id)
+        if "review_process" not in route:
+            route = url_for("review_process") + "?id=" + str(review_id)
  
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
         html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=route)
@@ -873,8 +900,33 @@ def review_event_page(review_id):
     html += "</ul>"
     return html
 
-@app.route("/review_class", methods=["GET"])
-def review_class():
+@app.route("/class_save", methods=["POST"])
+def class_save():
+    class_name = request.form["label_name"]
+    latin_name = request.form["latin_name"]
+    common_name = request.form["common_name"]
+    req = request.form["route"]
+    notes = request.form["notes"]
+    species_id = None if "species_id" not in request.form  or len(request.form["species_id"]) == 0 else int(request.form["species_id"])
+
+    conn = get_db()
+    cur = conn.cursor()
+    
+    sql_parms = [class_name, latin_name, common_name, notes]
+    if species_id is None:
+        cur.execute("""INSERT INTO species (label_name, latin_name, common_name, notes) VALUES (?,?,?,?)""",sql_parms)
+    else:
+        sql_parms.append(species_id)
+        cur.execute("""update species set label_name=?, latin_name=?, common_name=?, notes=? where species_id = ?""",sql_parms)
+
+    conn.commit()
+    conn.close()
+    flash("Class specification save")
+
+    return redirect(req)
+
+@app.route("/class_review", methods=["GET"])
+def class_review():
     review_class = request.args["class"]
     
     page = None
@@ -906,6 +958,27 @@ def review_class():
     conn = get_db()
     cur = conn.cursor()
 
+    cur.execute("select species_id, label_name, latin_name, common_name, notes from species where label_name = ?", [review_class])
+    rows = cur.fetchall()
+    
+    vals = {"id": "", "label_name": "", "latin_name": "", "common_name": "", "notes": ""}
+    if len(rows) > 1:
+        vals["id"] = rows[0][0]
+        vals["label_name"] = rows[0][1]
+        vals["latin_name"] = rows[0][2]
+        vals["common_name"] = rows[0][3]
+        vals["notes"] = rows[0][4]
+
+    html += "<fieldset class=\"collapsible collapsed\" style=\"width: 600px\"><legend>Class Specifics</legend><div class=\"fieldset-content\"><form method=\"POST\" action=\"class_save\">"
+    html += f"<input type=\"hidden\" name=\"species_id\" value=\"{vals['id']}\">"
+    html += f"<input type=\"hidden\" name=\"route\" value=\"{request.full_path}\">"
+    html += f"Label Name:<br><input readonly name=\"label_name\" value=\"{review_class}\"><br><br>"
+    html += f"Latin Name:<br><input name=\"latin_name\" value=\"{ vals['latin_name'] if vals['latin_name'] else ''}\"><br><br>"
+    html += f"Common Name:<br><input name=\"common_name\" value=\"{ vals['common_name'] if vals['common_name'] else ''}\"><br><br>"
+    html += f"Notes:<br><textarea name=\"notes\">{ vals['notes'] if vals['notes'] else ''}</textarea><br><br>"
+    html += "<button type=\"submit\">Save</button>"
+    html += "</form></div></fieldset>"
+    
     sql_pages = f"""SELECT count(*) FROM detections WHERE """
     sql_query = f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
     sql_args = []
@@ -944,7 +1017,7 @@ def review_class():
     filter_html += "</select></form>" 
     filter_html += "</fieldset><br>"
     filter_html += "<li style=\"list-style-type: none;\">" 
-    filter_html += paginate("review_class", "page", page, max_page) + "<br><br>"
+    filter_html += paginate("class_review", "page", page, max_page) + "<br><br>"
     filter_html += "</li>"
 
     html += filter_html
@@ -954,13 +1027,13 @@ def review_class():
         html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
         html += "</li><br>"
 
-    html += "<li style=\"list-style-type: none;\">" + paginate("review_class", "page", page, max_page) + "</li>"
+    html += "<li style=\"list-style-type: none;\">" + paginate("class_review", "page", page, max_page) + "</li>"
     html += "</ul>"
 
     return make_page(title = "Review Class", content = html)
 
-@app.route("/review_event", methods=["GET"])
-def review_event():
+@app.route("/review_process", methods=["GET"])
+def review_process():
     review_id = int(request.args["id"])
     html = review_event_page(review_id)
 
@@ -1017,8 +1090,7 @@ def review_manual():
         html += "&#9989; The event was found and created."
 
         cur.execute("""SELECT last_insert_rowid()""")
-        rows = cur.fetchall()
-        review_id = rows[0][0]
+        review_id = cur.lastrowid
         conn.commit()
         conn.close()
         
@@ -1058,7 +1130,8 @@ def spectrogram(id):
 @app.route("/setup", methods=["GET"])
 def setup():
     long_size = 75
-    html = "<h1>Setup Heket</h1>"
+    html = ""
+    html += "<h1>Setup Heket</h1>"
     html += "<ul>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
@@ -1089,12 +1162,58 @@ def setup():
     html += f"<tr><td>Notification Provider:</td><td><input name=\"NOTIFICATION_PROVIDER\" size=\"{long_size}\" value=\"{heket_config.NOTIFICATION_PROVIDER}\"></td></tr>"
     html += f"<tr><td>Bout Miniumum Detections:</td><td><input name=\"BOUT_MIN_CLIPS\" size=\"5\" value=\"{heket_config.BOUT_MIN_CLIPS}\"></td></tr>"
     html += f"<tr><td>Bout Maximum Silence (s):</td><td><input name=\"BOUT_MAX_SILENT\" size=\"5\" value=\"{heket_config.BOUT_MAX_SILENT}\"></td></tr>"
+    html += f"<tr><td>Latitude:</td><td><input name=\"LAT\" size=\"15\" value=\"{heket_config.LAT}\"></td></tr>"
+    html += f"<tr><td>Longitude:</td><td><input name=\"LON\" size=\"15\" value=\"{heket_config.LON}\"></td></tr>"
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
-    html += "</form>"
+    html += "</form><br>"
+    
+    if False:
+        html += "<h2>Link to TurtlePond.us</h2>TurtlePond.us can help you easily share recordings with sites such as iNaturalist. No complicated registration required.<br><br>"
+        ok = False
+        if heket_config.TURTLEPOND_KEY == None or not heket_common.test_key():
+            html += "The link has not been established or is broken."
+        else:
+            html += "The link is working correctly."
+            ok = True
+            
+        html += "  <form style=\"display: inline\" method=\"POST\" action=\"turtlepond_link\" onsubmit=\"return confirm('Do you want to reconnect?')\"><button type=\"submit\">Reconnect</button></form>"
+
+        if ok:
+            html += "<br><br><form method=\"POST\" action=\"turtlepond_manage\"><button type=\"submit\">Manage Integrations</button></form>"
+            
     html += "</ul>"
 
     return make_page(title = "Setup", content = html)
+
+@app.route("/turtlepond_link", methods=["POST"])
+def turtlepond_link():
+    key = heket_common.key_generate()
+
+    try:
+        response = requests.post(heket_config.TURTLEPOND + "device_register", json={"device_key": key})
+
+        if response.status_code == 200:
+            heket_config.save_config_value("HEKET_TURTLEPOND_KEY",key)
+            heket_config.TURTLEPOND_KEY = key
+            res = response.json()
+            return make_page(title="Complete Linking", content=f"<h1>Complete Linking</h1><ul>To complete the link, enter this code: {res['challenge']} on the <a href=\"{res['challenge_url']}\">TurtlePond</a> website within a few minutes.</ul>")
+        else:
+            return make_page(title="Link Failed", content="<h1>Linking Failed</h1>Please try again later.")
+    except Exception as e:
+        return make_page(title="Link Failed", content="<h1>Linking Failed</h1>Please try again later.")
+        
+@app.route("/turtlepond_manage", methods=["POST"])
+def turtlepond_manage():
+    try:
+        response = requests.get(heket_config.TURTLEPOND + "session_create", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        if response.status_code == 200:
+            res = response.json()
+            return redirect(res["url"])
+        else:
+            return make_page(title="Management Failed", content="<h1>Management Failed</h1>Please try again later.")
+    except Exception as e:
+        return make_page(title="Management Failed", content="<h1>Management Failed</h1>Please try again later.")
 
 @app.route("/setup_save", methods=["POST"])
 def setup_save():
@@ -1110,6 +1229,8 @@ def setup_save():
     notif_prov = request.form["NOTIFICATION_PROVIDER"]
     bout_clips = request.form["BOUT_MIN_CLIPS"]
     bout_silence = request.form["BOUT_MAX_SILENT"]
+    lat = request.form["LAT"]
+    lon = request.form["LON"]
     
     heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
     heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
@@ -1123,6 +1244,8 @@ def setup_save():
     heket_config.save_config_value("HEKET_NOTIFICATION_PROVIDER", notif_prov)
     heket_config.save_config_value("HEKET_BOUT_MIN_CLIPS", bout_clips)
     heket_config.save_config_value("HEKET_BOUT_MAX_SILENT", bout_silence)
+    heket_config.save_config_value("HEKET_LAT", lat)
+    heket_config.save_config_value("HEKET_LON", lon)
     
     signal_pipeline()
     heket_config.reload()

@@ -202,3 +202,26 @@ abbr {
     padding: 4px;
     z-index: 1000;
 }
+
+fieldset.collapsible.collapsed .fieldset-content {
+  display: none;
+}
+
+fieldset.collapsible legend {
+  cursor: pointer;
+  user-select: none; /* Prevents text highlighting on double-click */
+}
+
+fieldset.collapsible.collapsed legend::after {
+  content: " ▼";
+  font-size: 0.8rem;
+  font-weight: normal;
+  color: #666;
+}
+
+fieldset.collapsible:not(.collapsed) legend::after {
+  content: " ▲";
+  font-size: 0.8rem;
+  font-weight: normal;
+  color: #666;
+}

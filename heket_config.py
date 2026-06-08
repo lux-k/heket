@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.14
+VERSION = 0.15
 
 load_dotenv()
 
@@ -36,6 +36,9 @@ NOTIFICATION_PROVIDER = None
 BOUT_MIN_CLIPS = None
 BOUT_MAX_SILENT = None
 
+LAT = None
+LON = None
+
 # the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
 CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
@@ -49,6 +52,8 @@ UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
+TURTLEPOND_KEY = None
+TURTLEPOND = None
 
 def reload():
     global CONFIG_FILE
@@ -66,6 +71,12 @@ def reload():
     global NOTIFICATION_PROVIDER
     global BOUT_MIN_CLIPS
     global BOUT_MAX_SILENT
+
+    global LAT
+    global LON
+    
+    global TURTLEPOND_KEY
+    global TURTLEPOND
 
     load_dotenv(CONFIG_FILE, override=True)
 
@@ -85,7 +96,13 @@ def reload():
     BOUT_MIN_CLIPS = int(os.getenv("HEKET_BOUT_MIN_CLIPS", 10))
     BOUT_MAX_SILENT = int(os.getenv("HEKET_BOUT_MAX_SILENT", 600))
 
+    LAT = float(os.getenv("HEKET_LAT", 38))
+    LON = float(os.getenv("HEKET_LON", 77))
+
     NOTIFICATION_PROVIDER = os.getenv("HEKET_NOTIFICATION_PROVIDER", "")
+    
+    TURTLEPOND_KEY = os.getenv("HEKET_TURTLEPOND_KEY", "")
+    TURTLEPOND = os.getenv("HEKET_TURTLEPOND", "https://turtlepond.us/")
     
 reload()
 
