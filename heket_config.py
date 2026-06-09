@@ -102,7 +102,7 @@ def reload():
     NOTIFICATION_PROVIDER = os.getenv("HEKET_NOTIFICATION_PROVIDER", "")
     
     TURTLEPOND_KEY = os.getenv("HEKET_TURTLEPOND_KEY", "")
-    TURTLEPOND = os.getenv("HEKET_TURTLEPOND", "https://turtlepond.us/")
+    TURTLEPOND = os.getenv("HEKET_TURTLEPOND", "https://turtlepond.us/heket/device/")
     
 reload()
 

@@ -20,6 +20,8 @@ import heket_common
 SESSIONS = {}
 WORDS = ['frog','toad','tadpole','pollywog','treefrog','bullfrog']
 
+os.makedirs(heket_config.DATA_DIR, exist_ok=True)
+
 def get_db():
     return heket_common.get_db()
     sqlite3.connect(heket_config.DB_FILE)
@@ -52,10 +54,10 @@ setTimeout(() => {{
 
 </script>
 <link rel="stylesheet" href="web_assets/style.css">
-<link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/web_assets/icons/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/web_assets/icons/favicon-16x16.png">
-<link rel="manifest" href="/web_assets/icons/site.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="web_assets/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="web_assets/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="web_assets/icons/favicon-16x16.png">
+<link rel="manifest" href="web_assets/icons/site.webmanifest">
 </head><body>
 """    
     messages = get_flashed_messages()
@@ -67,10 +69,10 @@ setTimeout(() => {{
         html += "</div>"
         
     html +="<div style=\"width: 100%; margin-bottom: 20px; text-align: center;\">"
-    html += f"<img src=\"/web_assets/heket_logo_small.png\"></div><br>"
+    html += f"<img src=\"web_assets/heket_logo_small.png\"></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
-    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
+    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += """
 """
@@ -105,7 +107,7 @@ def device_register():
         if len(rows) == 0:
             cur.execute(f"""insert into challenges (device_id, challenge, expires) values (?,?,?)""", [device_id, challenge, time.time() + 600])
             conn.commit()
-            return jsonify({"challenge": challenge, "status": "pending", "challenge_url": "{heket_config.TURTLEPOND}device_link"})
+            return jsonify({"challenge": challenge, "status": "pending", "challenge_url": f"{heket_config.TURTLEPOND}device_link"})
         else:
             abort(403)
     else:

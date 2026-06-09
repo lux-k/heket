@@ -1,0 +1,12 @@
+[Unit]
+Description=Heket Server
+After=network.target auditd.service
+
+[Service]
+User=username
+Group=username
+WorkingDirectory=/opt/heket/heket_server
+ExecStart=/opt/heket_venv/bin/python3 heket_server.py
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255

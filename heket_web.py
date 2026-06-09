@@ -498,9 +498,12 @@ def index():
     if len(rows) == 0:
         html += f"<li><i>none</i></li>"
     else:
+        html += "<div style=\"width: fit-content; overflow-y: auto; height: 200px; padding-right: 10px;\">"
+
         for r in rows:
             html += f"<li><a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}</li>"    
 
+        html += "</div>"
     html += "</div>"
     
     html += "<div class=\"maincard\">"
@@ -553,13 +556,19 @@ def index():
 
     html += "<div class=\"maincard\">"
     html += "<h1>Model</h1>"
-    html += f"<ul><h2>Current</h2><ul><span class=\"accent\">{Path(heket_config.MODEL_FILE).name}</span></ul></ul>"
+    curr_model = Path(heket_config.MODEL_FILE).name
+    html += f"<ul><h2>Current</h2><ul><span class=\"accent\">{curr_model}</span></ul></ul>"
     html += "<ul><h2>Available <form style=\"display: inline;\" method=\"POST\" action=\"model_reload\"><button type=\"submit\">&#10227;</button></form></h2><ul>"
     if len(CUSTOM_MODELS) == 0:
         html += "<i>none</i>"
     else:
+        html += "<form method=\"POST\" action=\"model_switch\" style=\"display: inline\"\">"
+        html += "<select name=\"model\"\">"
         for m in CUSTOM_MODELS:
-            html += f"<a href=\"model_switch?model={m}\">{m}</a><br>"
+            if m != curr_model:
+                html += "<option"
+                html += f">{m}</option>"
+        html += "</select> <button type=\"submit\" onclick=\"return confirm('Switch model?')\">Switch</button></form>"
             
     html += "</ul><h2>Train</h2><ul>"
     html += "<form method=\"POST\" action=\"/model_train\"><button type=\"submit\">Train</button></form></ul>"
@@ -835,9 +844,9 @@ def detection_delete_web():
     else:
         return redirect(route)
 
-@app.route("/model_switch", methods=["GET"])
+@app.route("/model_switch", methods=["POST"])
 def model_switch():
-    model = request.args["model"]
+    model = request.form["model"]
     
     if len(model) == 0:
         return redirect(url_for("index"))

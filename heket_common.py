@@ -125,7 +125,6 @@ def key_generate():
 
 def test_key():
     try:
-        print(heket_config.TURTLEPOND_KEY)
         response = requests.get(heket_config.TURTLEPOND + "ping", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
         
         if response.status_code == 200:
