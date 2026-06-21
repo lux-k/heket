@@ -194,7 +194,11 @@ class CnnModel(HeketModel):
         features = features[..., np.newaxis]
 
         probs = self.model.predict(features)[0]
+        
         idx = probs.argmax()
+        
+#        print(probs)
+#        print(self.labels)
 
         species = self.labels[idx]
 

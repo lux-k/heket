@@ -1,4 +1,4 @@
-from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session
+from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
 import time
 import sqlite3
 import heket_config
@@ -122,7 +122,7 @@ setTimeout(() => {{
     html += "<div class=\"floater\"><form method=\"GET\" action=\"review_add\"><button style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></form></div>"
     url = url_for("index")
     html +="<div style=\"width: 100%; margin-bottom: 20px; text-align: center;\">"
-    html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a></div><br>"
+    html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a><div id=\"last-heard\"></div></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
     html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
@@ -132,6 +132,8 @@ setTimeout(() => {{
 const preview = document.getElementById("spectrogram-preview");
 const image = document.getElementById("spectrogram-image");
 const weather = document.getElementById("weather");
+const last_heard = document.getElementById("last-heard");
+
 document
 .querySelectorAll(".detection-item")
 .forEach(row => {
@@ -170,6 +172,26 @@ document.querySelectorAll('fieldset legend').forEach(legend => {
     legend.closest('fieldset').classList.toggle('collapsed');
   });
 });
+
+const evt = new EventSource('/event_stream');
+const last_heard_things = [];
+
+evt.addEventListener('soundscape', (event) => {
+    const max_msg = 10;
+    try {
+        var data = JSON.parse(event.data);
+        const msg = data["label"] + " " + data["confidence"];
+        last_heard.innerHTML = "&#x1F442 " + msg;
+        last_heard_things.push(msg);
+        if (last_heard_things.length > max_msg)
+            last_heard_things.shift();
+        
+        last_heard.title = last_heard_things.toReversed().join("\\n");
+    } catch (err) {
+        console.log(err);
+    }
+});
+
 </script>
 """
     html += "</body></html>"
@@ -1272,6 +1294,33 @@ def model_train():
         flash("Already training a model")
         
     return redirect(url_for("index"))
+
+@app.route('/event_stream')
+def last_heard():
+
+    def generate():
+        if Path(heket_config.CURRENT_STATE).is_file():
+            last_mod = 0
+            while True:
+                curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
+                if last_mod != curr_mod:
+                    with open(heket_config.CURRENT_STATE) as f:
+                        data = json.load(f)
+                        if "label" in data:
+                            data["label"] = label_to_name(data["label"])
+                        if "confidence" in data:
+                            data["confidence"] = f"{data['confidence']:.2f}"
+
+                        yield f"event: soundscape\ndata: {json.dumps(data)}\n\n"
+
+                    last_mod = curr_mod
+
+                time.sleep(5)
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream'
+    )
 
 def signal_pipeline():
     try:

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.15
+VERSION = 0.16
 
 load_dotenv()
 
@@ -54,6 +54,8 @@ FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
 MODEL_TYPES = ["mfcc_simple","mfcc_deltas","cnn_sg"]
 TURTLEPOND_KEY = None
 TURTLEPOND = None
+
+CURRENT_STATE = "/dev/shm/heket-current.json"
 
 def reload():
     global CONFIG_FILE

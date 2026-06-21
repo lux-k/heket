@@ -12,6 +12,7 @@ import sys
 import signal
 from urllib.parse import urlsplit, parse_qs
 import requests
+import json
 
 # ==== CONFIG ====
 import heket_config
@@ -169,6 +170,24 @@ def bout_open(species):
     
     conn.commit()
 
+def bout_clean_orphan():
+    # clean up dangling bouts
+
+    cur.execute("""select bout_id from bouts where end_detection_id is null""")
+    rows = cur.fetchall()
+    count = 0
+    for row in rows:
+        #we have the bout_id of a dangling bout now
+        cur.execute("""select max(id), max(recorded), min(confidence), max(confidence), avg(confidence), count(*), bout_id from detections where bout_id = ?""", [ row[0] ])
+        vals = cur.fetchall()
+        if len(vals) > 0:
+            cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ?""", vals[0])
+            count += 1
+    
+    conn.commit()
+    print("Cleaned up", count, "dangling bouts")
+    
+
 def bout_close(species, force=False):
     global bouts
     
@@ -205,7 +224,17 @@ def bout_notate(species, confidence, detection_id):
         
         bouts[species]["conf_avg"] = bouts[species]["conf_total"] / bouts[species]["detections"]
 
-# ==== CLASSIFY + STORE ====
+def soundscape_update(label,confidence):
+    dest = heket_config.CURRENT_STATE
+    tmp = dest + ".tmp"
+    
+    with open(tmp, "w") as f:
+        json.dump({"label": label, "confidence": confidence}, f)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(tmp, dest)    
+
 def process_file(path):
     global weather
     try:
@@ -214,19 +243,21 @@ def process_file(path):
         #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
         #if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
         if True:
-           weather_id = None
-           if weather is not None:
-               weather_id = weather["id"]
-               
-           bout_id = bout_get(species=species)
-           
-           cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
-           detection_id = cur.lastrowid
-           conn.commit()
+            weather_id = None
+            if weather is not None:
+                weather_id = weather["id"]
 
-           bout_notate(species=species,confidence=confidence,detection_id=detection_id)
+            bout_id = bout_get(species=species)
 
-           heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
+            cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
+            detection_id = cur.lastrowid
+            conn.commit()
+
+            bout_notate(species=species,confidence=confidence,detection_id=detection_id)
+
+            soundscape_update(label=species, confidence=confidence)
+
+            heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
         else:
            heket_common.delete_file(path)
 
@@ -307,6 +338,7 @@ def main():
     maintenance_time = 0
     last_file = time.time()
     quiet_seconds = 20
+    bout_clean_orphan()
     while True:
         print("Starting ffmpeg...")
         ffmpeg = start_ffmpeg()
