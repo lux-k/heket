@@ -28,7 +28,7 @@ NAME_CACHE = {}
 
 SSE_MSG = None
 SSE_COND = threading.Condition()
-
+LAST_HEARD = None
 
 def get_db():
     return heket_common.get_db()
@@ -178,24 +178,52 @@ document.querySelectorAll('fieldset legend').forEach(legend => {
   });
 });
 
-const evt = new EventSource('/event_stream');
-const last_heard_things = [];
 
-evt.addEventListener('soundscape', (event) => {
+const last_heard_things = [];
+const last_heard_update = 0;
+
+async function updateSoundscapeHTML(data) {
     const max_msg = 10;
     try {
+        if (data["last_update"] > last_heard_update) {
+            const msg = data["label"] + " " + data["confidence"];
+            last_heard.innerHTML = "&#x1F442 " + msg;
+            last_heard_things.push(msg);
+            if (last_heard_things.length > max_msg)
+                last_heard_things.shift();
+            
+            last_heard.title = last_heard_things.toReversed().join("\\n");
+            last_heard_update = data["last_update"];
+        }
+    } catch (err) {
+        console.log(err);
+    }
+}
+
+/*
+const evt = new EventSource('/event_stream');
+evt.addEventListener('soundscape', (event) => {
+    try {
         var data = JSON.parse(event.data);
-        const msg = data["label"] + " " + data["confidence"];
-        last_heard.innerHTML = "&#x1F442 " + msg;
-        last_heard_things.push(msg);
-        if (last_heard_things.length > max_msg)
-            last_heard_things.shift();
-        
-        last_heard.title = last_heard_things.toReversed().join("\\n");
+        updateSoundscapeHTML(data);
     } catch (err) {
         console.log(err);
     }
 });
+*/
+
+async function pollSoundscape() {
+    try {
+        const response = await fetch('/last_heard');
+        const data = await response.json();
+        updateSoundscapeHTML(data);
+    } catch (error) {
+        console.error('Failed to update soundscape:', error);
+    }
+}
+
+setInterval(pollSoundscape, 5000);
+pollSoundscape();
 
 </script>
 """
@@ -1500,7 +1528,7 @@ def bout_review():
 
 
 @app.route('/event_stream')
-def last_heard():
+def sse_last_heard():
     global SSE_COND
     global SSE_MSG
 
@@ -1528,9 +1556,16 @@ def last_heard():
         mimetype='text/event-stream'
     )
 
+@app.route('/last_heard')
+def last_heard():
+    global LAST_HEARD
+
+    return LAST_HEARD
+
 def classifier_watcher():
     global SSE_COND
     global SSE_MSG
+    global LAST_HEARD
     
     last_mod = 0
 
@@ -1549,8 +1584,11 @@ def classifier_watcher():
                 if "confidence" in data:
                     data["confidence"] = f"{data['confidence']:.2f}"
 
+                data["last_update"] = int(time.time())
+
             with SSE_COND:
-                SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
+                LAST_HEARD = json.dumps(data)
+                SSE_MSG = f"event: soundscape\ndata: {LAST_HEARD}\n\n"
                 SSE_COND.notify_all()
 
             last_mod = curr_mod
