@@ -1,3 +1,4 @@
+import threading
 from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
 import time
 import sqlite3
@@ -24,6 +25,10 @@ ALERTS = []
 ALERTS_CHECKED = 0
 TRAINING = None
 NAME_CACHE = {}
+
+SSE_MSG = None
+SSE_COND = threading.Condition()
+
 
 def get_db():
     return heket_common.get_db()
@@ -343,7 +348,7 @@ def make_detection_infoline( id, recorded, animal, confidence, file, labeled, cu
     if route is not None:
         extra="&" + urlencode( {"route": route} )
     html += f"<abbr title=\"Delete detection\"><a href=\"detection_delete?id={id}{extra}\" style=\"color: red\" onclick=\"return confirm('Delete this detection?')\">&#8998;</a></abbr> " #&#9940;
-    html += f"{recorded} "
+    html += f"<a href=\"/review_process?detection_id={id}\">{recorded}</a> "
     if weather is not None:
         html += f"<div class=\"weather-item\" data-event-id=\"{make_weather( weather )}\">&#9925;</div>"
     html += f" — { label_to_name(animal) } ({confidence:.2f}) "
@@ -900,17 +905,21 @@ def review_add():
     html += review_event_page(review_id)
     return make_page(title = "Review noted", content = html)
 
-def review_event_page(review_id):
+def review_event_page(review_id=0, detection_id=0):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
-    rows = cur.fetchall()
-    detection_id = rows[0][0]
+    
+    html = f"<h1>Review Event</h1><ul>"
+    if review_id != 0:
+        cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
+        rows = cur.fetchall()
+        detection_id = rows[0][0]
+        html += "Reported: {rows[0][1]}" + str(rows[0][0]) + "<br>"
     
     high = detection_id + int((2 * 60) / heket_config.SEGMENT_TIME)
     low = detection_id - int((5 * 60) / heket_config.SEGMENT_TIME)
 
-    html = f"<h1>Review Event</h1><ul>Reported: {rows[0][1]}" + str(rows[0][0]) + f"<br>Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
+    html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
     cur.execute(f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
     
@@ -990,10 +999,11 @@ def class_review():
     cur = conn.cursor()
 
     cur.execute("select species_id, label_name, latin_name, common_name, notes from species where label_name = ?", [review_class])
+    print(review_class)
     rows = cur.fetchall()
     
     vals = {"id": "", "label_name": "", "latin_name": "", "common_name": "", "notes": ""}
-    if len(rows) > 1:
+    if len(rows) >= 1:
         vals["id"] = rows[0][0]
         vals["label_name"] = rows[0][1]
         vals["latin_name"] = rows[0][2]
@@ -1065,22 +1075,29 @@ def class_review():
 
 @app.route("/review_process", methods=["GET"])
 def review_process():
-    review_id = int(request.args["id"])
-    html = review_event_page(review_id)
+    review_id = 0
+    detection_id = 0
+    if "id" in request.args:
+        review_id = int(request.args["id"])
+    if "detection_id" in request.args:
+        detection_id = int(request.args["detection_id"])
 
+    html = review_event_page(review_id, detection_id)
     return make_page(title = "Review Event", content = html)
 
 @app.route("/review_delete", methods=["POST"])
 def review_delete():
     review_id = int(request.form["id"])
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""delete from reviews where id = ?""", [review_id])
-    conn.commit()
-    conn.close()
+    if review_id != 0:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""delete from reviews where id = ?""", [review_id])
+        conn.commit()
+        conn.close()
 
-    flash("Event deleted")
+        flash("Event deleted")
+        
     return redirect(url_for("index"))
 
 @app.route("/curate", methods=["POST"])
@@ -1295,32 +1312,7 @@ def model_train():
         
     return redirect(url_for("index"))
 
-@app.route('/event_stream')
-def last_heard():
 
-    def generate():
-        if Path(heket_config.CURRENT_STATE).is_file():
-            last_mod = 0
-            while True:
-                curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
-                if last_mod != curr_mod:
-                    with open(heket_config.CURRENT_STATE) as f:
-                        data = json.load(f)
-                        if "label" in data:
-                            data["label"] = label_to_name(data["label"])
-                        if "confidence" in data:
-                            data["confidence"] = f"{data['confidence']:.2f}"
-
-                        yield f"event: soundscape\ndata: {json.dumps(data)}\n\n"
-
-                    last_mod = curr_mod
-
-                time.sleep(5)
-
-    return Response(
-        generate(),
-        mimetype='text/event-stream'
-    )
 
 def signal_pipeline():
     try:
@@ -1507,6 +1499,51 @@ def bout_review():
     return make_page(title = "Review Bout", content = html)
 
 
+@app.route('/event_stream')
+def last_heard():
+    global SSE_COND
+    global SSE_MSG
+
+    def generate():
+        global SSE_COND
+        global SSE_MSG
+        try:
+            while True:
+                with SSE_COND:
+                    SSE_COND.wait()
+                    yield SSE_MSG
+        except GeneratorExit:
+            print("SSE Client disconnected")        
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream'
+    )
+
+
+def classifier_watcher():
+    global SSE_COND
+    global SSE_MSG
+    
+    if Path(heket_config.CURRENT_STATE).is_file():
+        last_mod = 0
+        while True:
+            with SSE_COND:
+                curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
+                if last_mod != curr_mod:
+                    with open(heket_config.CURRENT_STATE) as f:
+                        data = json.load(f)
+                        if "label" in data:
+                            data["label"] = label_to_name(data["label"])
+                        if "confidence" in data:
+                            data["confidence"] = f"{data['confidence']:.2f}"
+
+                        SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
+                        SSE_COND.notify_all()
+                        last_mod = curr_mod
+
+        time.sleep(5)
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-	
+    threading.Thread(target=classifier_watcher, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000, threaded=True)
