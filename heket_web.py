@@ -914,7 +914,7 @@ def review_event_page(review_id=0, detection_id=0):
         cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
         rows = cur.fetchall()
         detection_id = rows[0][0]
-        html += "Reported: {rows[0][1]}" + str(rows[0][0]) + "<br>"
+        html += f"Reported: {rows[0][1]}" + str(rows[0][0]) + "<br>"
     
     high = detection_id + int((2 * 60) / heket_config.SEGMENT_TIME)
     low = detection_id - int((5 * 60) / heket_config.SEGMENT_TIME)
@@ -1525,22 +1525,27 @@ def classifier_watcher():
     global SSE_COND
     global SSE_MSG
     
-    if Path(heket_config.CURRENT_STATE).is_file():
-        last_mod = 0
-        while True:
-            with SSE_COND:
-                curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
-                if last_mod != curr_mod:
-                    with open(heket_config.CURRENT_STATE) as f:
-                        data = json.load(f)
-                        if "label" in data:
-                            data["label"] = label_to_name(data["label"])
-                        if "confidence" in data:
-                            data["confidence"] = f"{data['confidence']:.2f}"
+    last_mod = 0
 
-                        SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
-                        SSE_COND.notify_all()
-                        last_mod = curr_mod
+    while True:
+        if Path(heket_config.CURRENT_STATE).is_file():
+            break
+        time.sleep(5)
+
+    while True:
+        with SSE_COND:
+            curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
+            if last_mod != curr_mod:
+                with open(heket_config.CURRENT_STATE) as f:
+                    data = json.load(f)
+                    if "label" in data:
+                        data["label"] = label_to_name(data["label"])
+                    if "confidence" in data:
+                        data["confidence"] = f"{data['confidence']:.2f}"
+
+                    SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
+                    SSE_COND.notify_all()
+                    last_mod = curr_mod
 
         time.sleep(5)
 
