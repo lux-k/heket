@@ -1507,19 +1507,26 @@ def last_heard():
     def generate():
         global SSE_COND
         global SSE_MSG
+
         try:
             while True:
                 with SSE_COND:
-                    SSE_COND.wait()
-                    yield SSE_MSG
+                    notified = SSE_COND.wait(timeout=2)
+
+                    if notified:
+                        msg = SSE_MSG
+                    else:
+                        msg = ": heartbeat\n\n"
+
+                yield msg
+
         except GeneratorExit:
-            print("SSE Client disconnected")        
+            print("SSE Client disconnected")  
 
     return Response(
         generate(),
         mimetype='text/event-stream'
     )
-
 
 def classifier_watcher():
     global SSE_COND
@@ -1533,19 +1540,20 @@ def classifier_watcher():
         time.sleep(5)
 
     while True:
-        with SSE_COND:
-            curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
-            if last_mod != curr_mod:
-                with open(heket_config.CURRENT_STATE) as f:
-                    data = json.load(f)
-                    if "label" in data:
-                        data["label"] = label_to_name(data["label"])
-                    if "confidence" in data:
-                        data["confidence"] = f"{data['confidence']:.2f}"
+        curr_mod = os.path.getmtime(heket_config.CURRENT_STATE)
+        if last_mod != curr_mod:
+            with open(heket_config.CURRENT_STATE) as f:
+                data = json.load(f)
+                if "label" in data:
+                    data["label"] = label_to_name(data["label"])
+                if "confidence" in data:
+                    data["confidence"] = f"{data['confidence']:.2f}"
 
-                    SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
-                    SSE_COND.notify_all()
-                    last_mod = curr_mod
+            with SSE_COND:
+                SSE_MSG = f"event: soundscape\ndata: {json.dumps(data)}\n\n"
+                SSE_COND.notify_all()
+
+            last_mod = curr_mod
 
         time.sleep(5)
 
