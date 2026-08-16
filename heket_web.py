@@ -247,6 +247,11 @@ evt.addEventListener('soundscape', (event) => {
         console.log(err);
     }
 });
+
+// to make sure the browser releases the SSE connection
+window.addEventListener("pagehide", () => {
+    evt.close();
+});
 """
 
     if MESSAGING=="POLLING":
@@ -1616,20 +1621,19 @@ def sse_last_heard():
                 f"SSE CONNECT: clients={SSE_CLIENT_COUNT}, "
                 f"threads={threading.active_count()}"
             )
+
         try:
-            while True:
-                with SSE_COND:
-                    notified = SSE_COND.wait(timeout=5.0)
-
-                    if notified:
-                        msg = SSE_MSG
-                    else:
-                        msg = ": heartbeat\n\n"
-
+            if SSE_MSG is not None:
+                msg = SSE_MSG
                 yield msg
 
-        except GeneratorExit:
-            print("SSE Client disconnected")  
+            while True:
+                with SSE_COND:
+                    notified = SSE_COND.wait()
+
+                    if notified and SSE_MSG is not None:
+                        msg = SSE_MSG
+                        yield msg
         finally:
             with SSE_CLIENT_LOCK:
                 SSE_CLIENT_COUNT -= 1
@@ -1651,7 +1655,7 @@ def last_heard():
     return ""
 
 def classifier_watcher():
-    print("Classifier watcher running")
+    print("Classifier watcher thread running")
     global SSE_COND
     global SSE_MSG
     global LAST_HEARD
@@ -1681,7 +1685,7 @@ def classifier_watcher():
                 SSE_COND.notify_all()
 
             last_mod = curr_mod
-        time.sleep(5)
+        time.sleep(3)
 
 def start_background_services():
     threading.Thread(target=classifier_watcher, daemon=True).start()

@@ -1,3 +1,2 @@
 #!/bin/sh
-#python3 -u heket_pipeline.py
-gunicorn
+python3 -u heket_pipeline.py

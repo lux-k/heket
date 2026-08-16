@@ -292,7 +292,7 @@ def start_ffmpeg():
 
 def start_web():
     return subprocess.Popen([
-        "python", "heket_web.py",
+        "gunicorn"
     ])
 
 def do_maintenance():
