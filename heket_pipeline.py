@@ -1,3 +1,4 @@
+#MediaMTX  (docker container to broadcast an audio device to rtsp)
 import requests
 import os
 import time
@@ -74,7 +75,7 @@ def update_weather():
             print("Weather updated")
         except Exception as e:
             print(f"An unexpected weather error occurred: {e}")
-            weather = None
+            weather["id"] = None
             
 def reload_config():
     global model

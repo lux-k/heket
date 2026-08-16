@@ -6,3 +6,5 @@ soundfile
 matplotlib
 tensorflow
 requests
+gunicorn
+gevent

@@ -30,6 +30,11 @@ SSE_MSG = None
 SSE_COND = threading.Condition()
 LAST_HEARD = None
 
+SSE_CLIENT_COUNT = 0
+SSE_CLIENT_LOCK = threading.Lock()
+
+MESSAGING="SSE"
+
 def get_db():
     return heket_common.get_db()
     sqlite3.connect(heket_config.DB_FILE)
@@ -82,6 +87,7 @@ app.secret_key = "super secret key"
 
 def make_page(title = "Home", content = ""):
     global ALERTS
+    global MESSAGING
     update_alerts()
     html = f"<html><head><title>Heket v{heket_config.VERSION}: {title}</title>"
     html += """
@@ -111,6 +117,7 @@ setTimeout(() => {{
 </head><body>
 <div id="spectrogram-preview">
     <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'">
+    <div id="spectrogram-playhead"></div>
 </div>
 <div id="weather">
 </div>
@@ -138,6 +145,9 @@ const preview = document.getElementById("spectrogram-preview");
 const image = document.getElementById("spectrogram-image");
 const weather = document.getElementById("weather");
 const last_heard = document.getElementById("last-heard");
+const playhead = document.getElementById("spectrogram-playhead");
+var activeaudio = null;
+var pinnedspectro = false;
 
 document
 .querySelectorAll(".detection-item")
@@ -148,12 +158,37 @@ document
         preview.style.display = "block";
         preview.style.left = (e.pageX + 20) + "px";
         preview.style.top = (e.pageY + 30) + "px";
+        if (activeaudio != null)
+            activeaudio.removeEventListener("timeupdate",updatePlayhead)
+        activeaudio = row.parentElement.querySelector("audio");
+        activeaudio.addEventListener("timeupdate", updatePlayhead);
+
     });
 
     row.addEventListener("mouseleave", () => {
-        preview.style.display = "none";
+        if (!pinnedspectro)
+            preview.style.display = "none";
+    });
+
+    row.addEventListener("click", () => {
+        pinnedspectro = !pinnedspectro
     });
 });
+
+
+function updatePlayhead() {
+
+    if (!activeaudio.duration)
+        return;
+
+    const x =
+        (activeaudio.currentTime / activeaudio.duration) *
+        image.clientWidth;
+
+    playhead.style.left = `${x}px`;
+}
+
+
 
 document
 .querySelectorAll(".weather-item")
@@ -180,7 +215,7 @@ document.querySelectorAll('fieldset legend').forEach(legend => {
 
 
 const last_heard_things = [];
-const last_heard_update = 0;
+last_heard_update = 0;
 
 async function updateSoundscapeHTML(data) {
     const max_msg = 10;
@@ -199,8 +234,10 @@ async function updateSoundscapeHTML(data) {
         console.log(err);
     }
 }
+"""
 
-/*
+    if MESSAGING=="SSE":
+        html += """
 const evt = new EventSource('/event_stream');
 evt.addEventListener('soundscape', (event) => {
     try {
@@ -210,8 +247,10 @@ evt.addEventListener('soundscape', (event) => {
         console.log(err);
     }
 });
-*/
+"""
 
+    if MESSAGING=="POLLING":
+        html += """
 async function pollSoundscape() {
     try {
         const response = await fetch('/last_heard');
@@ -224,9 +263,8 @@ async function pollSoundscape() {
 
 setInterval(pollSoundscape, 5000);
 pollSoundscape();
-
-</script>
 """
+    html += "</script>"
     html += "</body></html>"
     return html
 
@@ -993,33 +1031,42 @@ def class_save():
 
     return redirect(req)
 
+
+def pull_value(var, default):
+    review_class = request.args["class"]
+    sess_key = "class " + review_class
+    
+    if var in request.args and len(request.args[var]) > 0:
+        return request.args[var]
+    elif sess_key in session and var in session[sess_key]:
+        return session[sess_key][var]
+    else:
+        return default
+
+
+
 @app.route("/class_review", methods=["GET"])
 def class_review():
     review_class = request.args["class"]
     
     page = None
     labeled = None
+    curated = None
+    conf_min = None
+    conf_max = None
     
     sess_key = "class " + review_class
     if sess_key not in session or not isinstance(session[sess_key], dict):
         session[sess_key] = {}
-        
-    if "page" in request.args:
-        page = int(request.args["page"])
-    elif sess_key in session and "page" in session[sess_key]:
-        page = int(session[sess_key]["page"])
-    else:
-        page = 1
-    
-    if "labeled" in request.args:
-        labeled = request.args["labeled"]
-    elif sess_key in session and "labeled" in session[sess_key]:
-        labeled = session[sess_key]["labeled"]
-    else:
-        labeled = "B"
 
+    page = int(pull_value("page", 1))
+    labeled = pull_value("labeled", "B")
+    curated = pull_value("curated", "B")
+    conf_min = float(pull_value("conf_min",0.00))
+    conf_max = float(pull_value("conf_max",1.00))
     session[sess_key]["page"] = page
     session[sess_key]["labeled"] = labeled
+    session[sess_key]["curated"] = curated
 
     html = f"<h1>Review Class</h1><ul>"
 
@@ -1027,7 +1074,6 @@ def class_review():
     cur = conn.cursor()
 
     cur.execute("select species_id, label_name, latin_name, common_name, notes from species where label_name = ?", [review_class])
-    print(review_class)
     rows = cur.fetchall()
     
     vals = {"id": "", "label_name": "", "latin_name": "", "common_name": "", "notes": ""}
@@ -1061,10 +1107,23 @@ def class_review():
         sql_args.append(review_class)
         sql_pages += "species = ? and labeled is null "
     else:
-        sql_query += "(labeled is null and species = ? ) or (labeled = ?)"
+        sql_query += "((labeled is null and species = ? ) or (labeled = ?)) "
         sql_args += [review_class, review_class]
-        sql_pages += "(labeled is null and species = ? ) or (labeled = ?)"
+        sql_pages += "((labeled is null and species = ? ) or (labeled = ?)) "
 
+    sql_query += "and confidence >= ? and confidence <= ? "
+    sql_args += [conf_min, conf_max]
+    sql_pages += "and confidence >= ? and confidence <= ? "
+
+    if curated == "Y":
+        sql_query += "and curated is not null "
+        sql_pages += "and curated is not null "
+    elif curated == "N":
+        sql_query += "and curated is null "
+        sql_pages += "and curated is null "
+
+
+    print(sql_query)
     limit = 25
     cur.execute(sql_pages, sql_args)
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
@@ -1075,15 +1134,14 @@ def class_review():
         
     rows = cur.fetchall()
     
-    filter_html = "<fieldset style=\"width: 150px;\"><legend>  Filters  </legend>"
-    filter_html += f"<form style=\"display: inline\" method=\"GET\"><input type=\"hidden\" name=\"class\" value=\"{review_class}\">Labeled: <select onchange=\"this.form.submit()\" name=\"labeled\">"
+    filter_html = "<fieldset style=\"width: 350px;\"><legend>  Filters  </legend>"
+    filter_html += f"<form style=\"display: inline\" method=\"GET\"><input type=\"hidden\" name=\"class\" value=\"{review_class}\">"
+    filter_html += "Labeled: " + yes_no_both_dropdown("labeled", labeled, ['Yes','No','Both']) + "<br>"
+    filter_html += "Curated: " + yes_no_both_dropdown("curated", curated, ['Yes','No','Both'])
     
-    for opt in ["Yes","No","Both"]:
-        filter_html += f"<option value=\"{opt[0]}\""
-        if labeled == opt[0]:
-            filter_html += " selected"
-        filter_html += f">{opt}</option>"
-    filter_html += "</select></form>" 
+    filter_html += f"<br>Confidence Min: <input name=\"conf_min\" value=\"{conf_min}\" style=\"width: 50px\"> Max: <input name=\"conf_max\" value=\"{conf_max}\" style=\"width: 50px\"><br>"
+    filter_html += "<button type=\"submit\">Submit</button>"
+    filter_html += "</form>" 
     filter_html += "</fieldset><br>"
     filter_html += "<li style=\"list-style-type: none;\">" 
     filter_html += paginate("class_review", "page", page, max_page) + "<br><br>"
@@ -1101,6 +1159,19 @@ def class_review():
 
     return make_page(title = "Review Class", content = html)
 
+def yes_no_both_dropdown(name, value, arr):
+    
+    html = f"<select onchange=\"this.form.submit()\" name=\"{name}\">"
+    
+    for opt in arr:
+        html += f"<option value=\"{opt[0]}\""
+        if value == opt[0]:
+            html += " selected"
+        html += f">{opt}</option>"
+    html += "</select>"
+    
+    return html
+    
 @app.route("/review_process", methods=["GET"])
 def review_process():
     review_id = 0
@@ -1536,10 +1607,19 @@ def sse_last_heard():
         global SSE_COND
         global SSE_MSG
 
+        global SSE_CLIENT_COUNT
+        global SSE_CLIENT_LOCK
+
+        with SSE_CLIENT_LOCK:
+            SSE_CLIENT_COUNT += 1
+            print(
+                f"SSE CONNECT: clients={SSE_CLIENT_COUNT}, "
+                f"threads={threading.active_count()}"
+            )
         try:
             while True:
                 with SSE_COND:
-                    notified = SSE_COND.wait(timeout=2)
+                    notified = SSE_COND.wait(timeout=5.0)
 
                     if notified:
                         msg = SSE_MSG
@@ -1550,19 +1630,28 @@ def sse_last_heard():
 
         except GeneratorExit:
             print("SSE Client disconnected")  
-
+        finally:
+            with SSE_CLIENT_LOCK:
+                SSE_CLIENT_COUNT -= 1
+                print(
+                    f"SSE DISCONNECT: clients={SSE_CLIENT_COUNT}, "
+                    f"threads={threading.active_count()}"
+                )
     return Response(
         generate(),
-        mimetype='text/event-stream'
+        mimetype='text/event-stream',
+        headers={"Cache-Control": "no-cache",  "X-Accel-Buffering": "no"}
     )
 
 @app.route('/last_heard')
 def last_heard():
     global LAST_HEARD
-
-    return LAST_HEARD
+    if LAST_HEARD is not None:
+        return LAST_HEARD
+    return ""
 
 def classifier_watcher():
+    print("Classifier watcher running")
     global SSE_COND
     global SSE_MSG
     global LAST_HEARD
@@ -1592,9 +1681,10 @@ def classifier_watcher():
                 SSE_COND.notify_all()
 
             last_mod = curr_mod
-
         time.sleep(5)
 
-if __name__ == "__main__":
+def start_background_services():
     threading.Thread(target=classifier_watcher, daemon=True).start()
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, threaded=True)

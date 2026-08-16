@@ -1,4 +1,5 @@
 #https://www.inaturalist.org/oauth/app_owner_application
+#https://www.inaturalist.org/oauth/applications
 from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, jsonify, abort
 import time
 import sqlite3
