@@ -18,6 +18,7 @@ import heket_classifier
 import math
 from urllib.parse import urlencode
 import requests
+import queue
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -32,6 +33,9 @@ LAST_HEARD = None
 
 SSE_CLIENT_COUNT = 0
 SSE_CLIENT_LOCK = threading.Lock()
+
+SUBSCRIBERS = set()
+SUBSCRIBERS_LOCK = threading.Lock()
 
 MESSAGING="SSE"
 
@@ -52,6 +56,7 @@ def update_models():
     else:
         CUSTOM_MODELS = []
 
+# obsolete
 def check_training():
     global ALERTS_CHECKED
     global TRAINING
@@ -101,12 +106,6 @@ function labelClip(file, label) {
         location.reload(); // or remove row dynamically
     });
 }
-setTimeout(() => {{
-    const t = document.getElementById("toast");
-    if (t) t.style.display = "none";
-}}, 5000);
-
-
 
 </script>
 <link rel="stylesheet" href="web_assets/style.css">
@@ -125,11 +124,15 @@ setTimeout(() => {{
     messages = get_flashed_messages()
     messages[:0] = ALERTS
   
+
+    html += f"<div id=\"toast\""
     if messages:
-        html += f"<div id=\"toast\">"
+        html += ">"
         for m in messages:
             html += f"{m}<br>"
-        html += "</div>"
+    else:
+        html += " style=\"display: none\">"
+    html += "</div>"
         
     html += "<div class=\"floater\"><form method=\"GET\" action=\"review_add\"><button style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></form></div>"
     url = url_for("index")
@@ -234,7 +237,17 @@ async function updateSoundscapeHTML(data) {
         console.log(err);
     }
 }
+
+
+const toast = document.getElementById("toast");
+var toastTimeout = setTimeout(() => {{
+    if (toast) toast.style.display = "none";
+    toastTimeout = null;
+}}, 5000);
+
 """
+
+
 
     if MESSAGING=="SSE":
         html += """
@@ -248,6 +261,28 @@ evt.addEventListener('soundscape', (event) => {
     }
 });
 
+evt.addEventListener('notification', (event) => {
+    try {
+        var data = JSON.parse(event.data);
+        
+        
+        if (toastTimeout) {
+            // it's already displayed... extend and add
+            clearTimeout(toastTimeout)
+            toast.innerHTML += data.message + "<br>";            
+        } else {
+            toast.innerHTML = data.message + "<br>";
+            toast.style.display = "block";
+        }
+
+        toastTimeout = setTimeout(() => {{
+            if (toast) toast.style.display = "none";
+            toastTimeout = null;
+        }}, 5000);        
+    } catch (err) {
+        console.log(err);
+    }
+});
 // to make sure the browser releases the SSE connection
 window.addEventListener("pagehide", () => {
     evt.close();
@@ -1409,14 +1444,22 @@ def setup_save():
 def model_train():
     global TRAINING
     if TRAINING is None:
-        TRAINING = subprocess.Popen(["python", "heket_train.py"])
+        threading.Thread(target=model_trainer_watcher, daemon=True).start()
         flash("Model training initiated")
     else:
         flash("Already training a model")
         
     return redirect(url_for("index"))
 
-
+def model_trainer_watcher():
+    global TRAINING
+ 
+    TRAINING = subprocess.Popen(["python", "heket_train.py"]) 
+    if TRAINING is not None:
+        TRAINING.wait()
+        simple_notify("Model training complete")
+        TRAINING = None
+        update_models()
 
 def signal_pipeline():
     try:
@@ -1430,6 +1473,12 @@ def signal_pipeline():
 
     except ProcessLookupError:
         print("Heket process not running")    
+
+def notify_pipeline(command, opts=None):
+    try:
+        response = requests.post('http://localhost:4999/' + command, json=opts)
+    except Exception as e:
+        print(f"Error sending notification to pipeline: {e}")
 
 @app.route("/bout_create", methods=["POST"])
 def bout_create():
@@ -1602,51 +1651,6 @@ def bout_review():
 
     return make_page(title = "Review Bout", content = html)
 
-
-@app.route('/event_stream')
-def sse_last_heard():
-    global SSE_COND
-    global SSE_MSG
-
-    def generate():
-        global SSE_COND
-        global SSE_MSG
-
-        global SSE_CLIENT_COUNT
-        global SSE_CLIENT_LOCK
-
-        with SSE_CLIENT_LOCK:
-            SSE_CLIENT_COUNT += 1
-            print(
-                f"SSE CONNECT: clients={SSE_CLIENT_COUNT}, "
-                f"threads={threading.active_count()}"
-            )
-
-        try:
-            if SSE_MSG is not None:
-                msg = SSE_MSG
-                yield msg
-
-            while True:
-                with SSE_COND:
-                    notified = SSE_COND.wait()
-
-                    if notified and SSE_MSG is not None:
-                        msg = SSE_MSG
-                        yield msg
-        finally:
-            with SSE_CLIENT_LOCK:
-                SSE_CLIENT_COUNT -= 1
-                print(
-                    f"SSE DISCONNECT: clients={SSE_CLIENT_COUNT}, "
-                    f"threads={threading.active_count()}"
-                )
-    return Response(
-        generate(),
-        mimetype='text/event-stream',
-        headers={"Cache-Control": "no-cache",  "X-Accel-Buffering": "no"}
-    )
-
 @app.route('/last_heard')
 def last_heard():
     global LAST_HEARD
@@ -1654,6 +1658,7 @@ def last_heard():
         return LAST_HEARD
     return ""
 
+# obsolete
 def classifier_watcher():
     print("Classifier watcher thread running")
     global SSE_COND
@@ -1682,13 +1687,119 @@ def classifier_watcher():
             with SSE_COND:
                 LAST_HEARD = json.dumps(data)
                 SSE_MSG = f"event: soundscape\ndata: {LAST_HEARD}\n\n"
+                publish(SSE_MSG)
                 SSE_COND.notify_all()
 
             last_mod = curr_mod
         time.sleep(3)
 
+@app.route('/classifier_message', methods=['POST'])
+def classifier_message():
+    global SSE_MSG
+    global LAST_HEARD
+    
+    if not request.is_json:
+        return json.dumps({"error": "Request must be JSON"}), 400
+        
+    req = request.get_json()
+    
+    print("Got", req)
+    
+    if "topic" not in req:
+        return json.dumps({"error": "Missing required field: topic"}), 400
+
+    if req["topic"] == "soundscape":
+        data = req["data"]
+        if "label" in data:
+            data["label"] = label_to_name(data["label"])
+        if "confidence" in data:
+            data["confidence"] = f"{data['confidence']:.2f}"
+
+        data["last_update"] = int(time.time())
+
+        LAST_HEARD = json.dumps(data)
+        SSE_MSG = f"event: soundscape\ndata: {LAST_HEARD}\n\n"
+        publish(SSE_MSG)
+    elif req["topic"] == "notification":
+        simple_notify(req["data"]["message"])
+
+    return json.dumps({"result": "ok"}), 200
+
+def simple_notify(message):
+    msg = json.dumps({"message": message})
+    publish( f"event: notification\ndata: {msg}\n\n")
+    
+@app.route('/event_stream')
+def sse_last_heard():
+    def generate():
+        global SSE_CLIENT_COUNT
+        global SSE_CLIENT_LOCK
+        global SSE_MSG
+
+        with SSE_CLIENT_LOCK:
+            SSE_CLIENT_COUNT += 1
+            print(
+                f"SSE CONNECT: clients={SSE_CLIENT_COUNT}, "
+                f"threads={threading.active_count()}"
+            )
+
+        my_q = subscribe()
+
+        try:
+            if SSE_MSG is not None:
+                msg = SSE_MSG
+                yield msg
+
+            while True:
+                event = my_q.get()
+                yield event
+
+        finally:
+            unsubscribe(my_q)
+            with SSE_CLIENT_LOCK:
+                SSE_CLIENT_COUNT -= 1
+                print(
+                    f"SSE DISCONNECT: clients={SSE_CLIENT_COUNT}, "
+                    f"threads={threading.active_count()}"
+                )
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={"Cache-Control": "no-cache",  "X-Accel-Buffering": "no"}
+    )
+    
+def subscribe():
+    global SUBSCRIBERS_LOCK
+    global SUBSCRIBERS
+
+    q = queue.Queue()
+
+    with SUBSCRIBERS_LOCK:
+        SUBSCRIBERS.add(q)
+
+    return q
+
+def unsubscribe(q):
+    global SUBSCRIBERS_LOCK
+    global SUBSCRIBERS
+
+    with SUBSCRIBERS_LOCK:
+        SUBSCRIBERS.discard(q)
+
+def publish(event):
+    global SUBSCRIBERS_LOCK
+    global SUBSCRIBERS
+    
+    with SUBSCRIBERS_LOCK:
+        targets = list(SUBSCRIBERS)
+
+    for q in targets:
+        q.put(event)
+
 def start_background_services():
-    threading.Thread(target=classifier_watcher, daemon=True).start()
+    if False:
+        threading.Thread(target=classifier_watcher, daemon=True).start()
 
 if __name__ == "__main__":
+    start_background_services()
     app.run(host="0.0.0.0", port=5000, threaded=True)

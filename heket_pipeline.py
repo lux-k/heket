@@ -14,6 +14,8 @@ import signal
 from urllib.parse import urlsplit, parse_qs
 import requests
 import json
+import threading
+from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
 
 # ==== CONFIG ====
 import heket_config
@@ -225,16 +227,24 @@ def bout_notate(species, confidence, detection_id):
         
         bouts[species]["conf_avg"] = bouts[species]["conf_total"] / bouts[species]["detections"]
 
-def soundscape_update(label,confidence):
-    dest = heket_config.CURRENT_STATE
-    tmp = dest + ".tmp"
-    
-    with open(tmp, "w") as f:
-        json.dump({"label": label, "confidence": confidence}, f)
-        f.flush()
-        os.fsync(f.fileno())
+def notify_web(topic, data):
+    try:
+        response = requests.post('http://localhost:5000/classifier_message', json={'topic': topic, 'data': data})
+    except Exception as e:
+        print(f"Error sending notification to web: {e}")
 
-    os.replace(tmp, dest)    
+# obsolete
+def soundscape_update(label,confidence):
+    if False:
+        dest = heket_config.CURRENT_STATE
+        tmp = dest + ".tmp"
+        
+        with open(tmp, "w") as f:
+            json.dump({"label": label, "confidence": confidence}, f)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(tmp, dest)    
 
 def process_file(path):
     global weather
@@ -256,8 +266,11 @@ def process_file(path):
 
             bout_notate(species=species,confidence=confidence,detection_id=detection_id)
 
-            soundscape_update(label=species, confidence=confidence)
-
+            #soundscape_update(label=species, confidence=confidence)
+            
+            notify_web(topic="soundscape", data={"label": species, "confidence": confidence, "detection_id": detection_id})
+#            notify_web(topic="notification", data={"message": "This is a test message"})
+            
             heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
         else:
            heket_common.delete_file(path)
@@ -425,6 +438,34 @@ def main():
                 ffmpeg.terminate()
             web.terminate()
             break
+
+app = None
+app = Flask(__name__)
+app.secret_key = "super secret key"
+
+def api_control():
+    global app
+    app.run(host="127.0.0.1", port=4999, threaded=True)
+
+@app.route("/reload_config", methods=["POST"])
+def api_reload_config():
+    return json.dumps(do_api_call("reload_config"))
+
+def do_api_call(command, opts={}):
+    ok = True
+    msg = None
+
+    try:
+        if command == "reload_config":
+            handle_reload(None,None)
+            msg = "Configuration reloaded"
+    except Exception as e:
+        ok = False
+        msg = "Command failed"
+    
+    return {"success": ok, "message": msg}
+    
+threading.Thread(target=api_control, daemon=True).start()
 
 if __name__ == "__main__":
     main()

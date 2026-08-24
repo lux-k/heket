@@ -241,7 +241,8 @@ class CnnModel(HeketModel):
         print("Using CNN..")
         X = []
         y = []
-
+        files = []
+        
         labels = os.listdir(source_path)
 
         # Load dataset
@@ -255,6 +256,7 @@ class CnnModel(HeketModel):
 
                     X.append(features)
                     y.append(label)
+                    files.append(path)
 
         X = np.array(X)
         X = X[..., np.newaxis]
@@ -282,14 +284,33 @@ class CnnModel(HeketModel):
         model.fit(X, y_encoded, epochs=10, batch_size=16 )
 
         file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
-
         model.save(file)
+        
+        
+        
         label_file = file.replace(".keras", ".labels")
 
         with open(label_file, "w") as f:
             for label in encoder.classes_:
                 f.write(f"{label}\n")
 
+        predictions = model.predict(X)
+        loss_fn = keras.losses.SparseCategoricalCrossentropy(
+            reduction="none"
+        )
+
+        losses = loss_fn(y_encoded, predictions).numpy()        
+
+        loss_file = file.replace(".keras",".loss")
+        with open(loss_file, "w") as f:
+            for path, loss in sorted(
+                zip(files, losses),
+                key=lambda x: x[1],
+                reverse=True
+            ):
+                f.write(f"{loss}\t{path}\n")
+
+        
         print(f"Model saved as {file}")
         print(f"Labels saved as {label_file}")    
         print("Classes:", encoder.classes_)
