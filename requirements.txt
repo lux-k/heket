@@ -4,7 +4,7 @@ numpy
 librosa
 soundfile
 matplotlib
-tensorflow
+tensorflow-cpu
 requests
 gunicorn
 gevent
