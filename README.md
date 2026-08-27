@@ -53,15 +53,49 @@ You should then be able to connect to the machine's IP on port 5000, e.g. http:/
 
 ## Docker setup
 
+### Using Compose
+
 Go to where you keep your Docker files, e.g. /opt
 
-docker-compose.yml
+Create a folder for Heket., e.g. ```mkdir heket```
+
+Go into the folder, e.g. ```cd heket```
+
+Create a data folder, e.g. ```mkdir heket-data```
+
+Create a docker-compose file, e.g. ```nano docker-compose.yml```
+
+docker-compose.yml:
 ```
 services:
   heket:
+    image: ghcr.io/lux-k/heket:latest
     container_name: heket
     restart: unless-stopped
-    build: ./heket
+    ports:
+      - "5000:5000"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./heket-data:/data:rw
+```
+
+Bring up the new container, e.g. ```docker compose up -d```
+
+### Building yourself
+
+Go to where to want the code to live.
+
+Grab the source code, e.g. ```git pull https://github.com/lux-k/heket.git```
+
+Add this stanza to your docker-compose.yml:
+
+```
+  heket:
+    container_name: heket
+    restart: unless-stopped
+    build:
+      context: ./heket
+      dockerfile: docker/dockerfile
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ./heket-data:/data:rw
@@ -69,19 +103,7 @@ services:
       - "5000:5000"
 ```
 
-Make a Heket container folder and a Heket data directory. Grab the code.
-```
-mkdir heket heket-data
-cd heket
-git pull https://github.com/lux-k/heket
-ln -s ./heket/docker/dockerfile dockerfile
-```
-
-Build the container and bring it up. Due to the deps, this may take a few minutes.
-```
-cd ..
-docker compose up heket --build
-```
+Build and run the container, e.g. ```docker compose up heket --build ```
 
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
