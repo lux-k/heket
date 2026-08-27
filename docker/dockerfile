@@ -5,15 +5,15 @@ RUN apt-get install -y ffmpeg libsndfile-dev build-essential cmake libedit-dev c
 
 WORKDIR /app
 
-COPY ./heket/requirements.txt /app/
+COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ./heket/*.py /app/
-COPY ./heket/docker/run.sh /app/
+COPY *.py /app/
+COPY docker/run.sh /app/
 RUN mkdir /app/models
-COPY ./heket/models/* /app/models
+COPY models/* /app/models
 RUN mkdir /app/web_assets
-COPY ./heket/web_assets /app/web_assets
+COPY web_assets /app/web_assets
 
 RUN chmod +x /app/*.sh
 
