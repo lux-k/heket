@@ -1,21 +1,49 @@
+# ============================================================
+# Stage 1: Build Python environment
+# ============================================================
+FROM python:3.12-slim AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        libsndfile-dev \
+        libedit-dev \
+        clang \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+RUN pip install \
+    --no-cache-dir \
+    --prefix=/install \
+    -r requirements.txt
+
+
+# ============================================================
+# Stage 2: Heket runtime
+# ============================================================
 FROM python:3.12-slim
 
-RUN apt-get update
-RUN apt-get install -y ffmpeg libsndfile-dev build-essential cmake libedit-dev clang zlib1g-dev
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /install /usr/local
 
 COPY *.py /app/
 COPY docker/run.sh /app/
-RUN mkdir /app/models
-COPY models/* /app/models
-RUN mkdir /app/web_assets
-COPY web_assets /app/web_assets
+COPY models/ /app/models/
+COPY web_assets/ /app/web_assets/
 
-RUN chmod +x /app/*.sh
+RUN chmod +x /app/run.sh
 
 VOLUME ["/data"]
 
