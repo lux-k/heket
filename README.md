@@ -34,23 +34,6 @@ It is only (poorly) trained on a few frogs: American bullfrog, grey tree frog, F
 
 ---
 
-## Quick start
-
-```bash
-apt install git ffmpeg
-cd /opt
-python -m venv heket-env
-source heket-env/bin/activate
-git clone https://github.com/lux-k/heket
-cd heket
-pip install -r requirements.txt
-python heket_pipeline.py
-```
-
-You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
-
----
-
 ## Docker setup
 
 ### Using Compose
@@ -81,7 +64,9 @@ services:
 
 Bring up the new container, e.g. ```docker compose up -d```
 
-### Building yourself
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
+
+### Docker building yourself
 
 Go to where to want the code to live.
 
@@ -104,6 +89,21 @@ Add this stanza to your docker-compose.yml:
 ```
 
 Build and run the container, e.g. ```docker compose up heket --build ```
+
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
+
+## Non-Docker setup
+
+```bash
+apt install git ffmpeg
+cd /opt
+python -m venv heket-env
+source heket-env/bin/activate
+git clone https://github.com/lux-k/heket
+cd heket
+pip install -r requirements.txt
+python heket_pipeline.py
+```
 
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
