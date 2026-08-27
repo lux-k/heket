@@ -34,9 +34,9 @@ It is only (poorly) trained on a few frogs: American bullfrog, grey tree frog, F
 
 ---
 
-## Docker setup
+## Installation
 
-### Using Compose
+### Using Docker Compose (easiest)
 
 Go to where you keep your Docker files, e.g. /opt
 
@@ -66,7 +66,7 @@ Bring up the new container, e.g. ```docker compose up -d```
 
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
-### Docker building yourself
+### Building your own container
 
 Go to where to want the code to live.
 
@@ -92,7 +92,7 @@ Build and run the container, e.g. ```docker compose up heket --build ```
 
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
-## Non-Docker setup
+## venv / non-Docker setup
 
 ```bash
 apt install git ffmpeg
