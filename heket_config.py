@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.19
+VERSION = 0.20
 
 load_dotenv()
 
@@ -56,6 +56,7 @@ TURTLEPOND_KEY = None
 TURTLEPOND = None
 
 CURRENT_STATE = "/dev/shm/heket-current.json"
+CRYPTO = None
 
 def reload():
     global CONFIG_FILE
@@ -104,7 +105,7 @@ def reload():
     NOTIFICATION_PROVIDER = os.getenv("HEKET_NOTIFICATION_PROVIDER", "")
     
     TURTLEPOND_KEY = os.getenv("HEKET_TURTLEPOND_KEY", "")
-    TURTLEPOND = os.getenv("HEKET_TURTLEPOND", "https://turtlepond.us/heket/device/")
+    TURTLEPOND = os.getenv("HEKET_TURTLEPOND", "https://turtlepond.us/api/")
     
 reload()
 

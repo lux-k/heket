@@ -22,6 +22,8 @@ import heket_config
 import heket_common
 import heket_classifier
 
+import turtlepond.dates
+
 with open(os.path.join(heket_config.DATA_DIR, "heket.pid"), "w") as f:
     f.write(str(os.getpid()))
 
@@ -111,13 +113,6 @@ def extract_features(file):
 
     return model.extract_features_from_audio(y, sr)
 
-def ts_from_filename(path):
-    fname = os.path.basename(path)
-
-    # grab last 15 chars before extension
-    ts_part = fname[-19:-4]   # YYYYMMDD_HHMMSS
-    return datetime.strptime(fname, heket_config.FILE_FORMAT)
-
 def bout_get(species):
     global bouts
     
@@ -134,7 +129,9 @@ def bout_get(species):
             return bouts[species]["bout_id"] #may be none or a number
         else:
             #new bout completely
-            bouts[species] = {"start_id": None, "start_time": datetime.now().isoformat(), "detections": 0, "last_time": time.time(), "bout_id": None, "end_time": datetime.now().isoformat(), "conf_min": None, "conf_max": None, "conf_total": 0}
+            #bouts[species] = {"start_id": None, "start_time": datetime.now().isoformat(), "detections": 0, "last_time": time.time(), "bout_id": None, "end_time": datetime.now().isoformat(), "conf_min": None, "conf_max": None, "conf_total": 0}
+            bouts[species] = {"start_id": None, "start_time": turtlepond.dates.get_epoch(), "detections": 0, "last_time": time.time(), "bout_id": None,
+                               "end_time": turtlepond.dates.get_epoch(), "conf_min": None, "conf_max": None, "conf_total": 0}
             bout_increment(species)
         
         return bouts[species]["bout_id"]
@@ -181,7 +178,7 @@ def bout_clean_orphan():
     count = 0
     for row in rows:
         #we have the bout_id of a dangling bout now
-        cur.execute("""select max(id), max(recorded), min(confidence), max(confidence), avg(confidence), count(*), bout_id from detections where bout_id = ?""", [ row[0] ])
+        cur.execute("""select max(id), max(recorded_ts), min(confidence), max(confidence), avg(confidence), count(*), bout_id from detections where bout_id = ?""", [ row[0] ])
         vals = cur.fetchall()
         if len(vals) > 0:
             cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ?""", vals[0])
@@ -214,7 +211,8 @@ def bout_notate(species, confidence, detection_id):
             bouts[species]["start_id"] = detection_id
         
         bouts[species]["last_id"] = detection_id
-        bouts[species]["end_time"] = datetime.now().isoformat()
+        #bouts[species]["end_time"] = datetime.now().isoformat()
+        bouts[species]["end_time"] = turtlepond.dates.get_epoch()
         bouts[species]["last_time"] = time.time()
         
         if bouts[species]["conf_min"] is None or confidence < bouts[species]["conf_min"]:
@@ -246,6 +244,11 @@ def soundscape_update(label,confidence):
 
         os.replace(tmp, dest)    
 
+def ts_from_filename(path):
+    fname = os.path.basename(path)
+
+    return datetime.strptime(fname, heket_config.FILE_FORMAT).replace(tzinfo=turtlepond.dates.HOST_TZ)
+
 def process_file(path):
     global weather
     try:
@@ -260,7 +263,10 @@ def process_file(path):
 
             bout_id = bout_get(species=species)
 
-            cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
+            #cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
+            cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""",
+                         [turtlepond.dates.datetime_to_epoch(ts_from_filename(path)), turtlepond.dates.get_epoch(), species, confidence, os.path.basename(path), weather_id, bout_id])
+            
             detection_id = cur.lastrowid
             conn.commit()
 
@@ -312,13 +318,14 @@ def do_maintenance():
     global bouts
     print("Time to do maintenance")
     cutoff = datetime.now() - timedelta(days = 3)
-    search = cutoff.isoformat()[:16]
-    print("Candidates to delete are", search)
+    search = int(cutoff.timestamp())
+    print("Candidates to delete are", cutoff.isoformat()[:16])
 
     cur = conn.cursor()
     
     # find the closet record.. bear in mind.. if the pipeline is run sporadically, this might fail..
-    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{search}%"])
+    #cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{search}%"])
+    cur.execute(f"""select min(id) from detections where recorded_ts > ? and recorded_ts < ?""", [search - 60, search + 60])
 
     rows = cur.fetchall()
     if len(rows) > 0:

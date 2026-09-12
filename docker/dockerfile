@@ -11,6 +11,7 @@ RUN apt-get update \
         libedit-dev \
         clang \
         zlib1g-dev \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

@@ -19,6 +19,7 @@ import math
 from urllib.parse import urlencode
 import requests
 import queue
+import turtlepond.dates
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -39,9 +40,19 @@ SUBSCRIBERS_LOCK = threading.Lock()
 
 MESSAGING="SSE"
 
+CAPS = None
+EXTERNS = False
+
+if EXTERNS:
+    def update_caps():
+        res, conf = heket_common.test_key()
+        if res:
+            CAPS = conf["capabilities"]
+
+    threading.Thread(target=update_caps, daemon=True).start()
+
 def get_db():
     return heket_common.get_db()
-    sqlite3.connect(heket_config.DB_FILE)
 
 def update_labels():
     global LABEL_CANDS
@@ -96,23 +107,12 @@ def make_page(title = "Home", content = ""):
     update_alerts()
     html = f"<html><head><title>Heket v{heket_config.VERSION}: {title}</title>"
     html += """
-<script>
-function labelClip(file, label) {
-    fetch('/label', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file, label })
-    }).then(() => {
-        location.reload(); // or remove row dynamically
-    });
-}
-
-</script>
 <link rel="stylesheet" href="web_assets/style.css">
 <link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/web_assets/icons/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/web_assets/icons/favicon-16x16.png">
 <link rel="manifest" href="/web_assets/icons/site.webmanifest">
+<script src="/web_assets/heket.js" defer></script>'
 </head><body>
 <div id="spectrogram-preview">
     <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'">
@@ -120,6 +120,23 @@ function labelClip(file, label) {
 </div>
 <div id="weather">
 </div>
+<dialog id="share_detection_dialog">
+    <h2>Share Detection</h2>
+    <ul><span id="share_detection_text"></span></ul>
+
+    <h2>With</h2>
+    <ul><span id="share_detection_recips"><input type="checkbox" value="iNaturalist">iNaturalist<br><input type="checkbox" value="turtlepond">TurtlePond.us Clip Collection</span>
+    
+    <form>
+    <input type="hidden" id="attachment_observation_id" name="observation_id">
+    
+    </form>
+    </ul>
+    <center>
+    <br><button type="button" onclick="uploadAttachment()">Share</button>  <button type="button" onclick="this.closest('dialog').close()">Cancel</button><br><br>
+    </center>
+    </form>
+</dialog>
 """    
     messages = get_flashed_messages()
     messages[:0] = ALERTS
@@ -144,149 +161,9 @@ function labelClip(file, label) {
     html += "</div></center>"
     html += """
 <script>
-const preview = document.getElementById("spectrogram-preview");
-const image = document.getElementById("spectrogram-image");
-const weather = document.getElementById("weather");
-const last_heard = document.getElementById("last-heard");
-const playhead = document.getElementById("spectrogram-playhead");
-var activeaudio = null;
-var pinnedspectro = false;
-
-document
-.querySelectorAll(".detection-item")
-.forEach(row => {
-    row.addEventListener("mouseenter", e => {
-        const eventId = row.dataset.eventId;
-        image.src = "/spectrogram/" + eventId;
-        preview.style.display = "block";
-        preview.style.left = (e.pageX + 20) + "px";
-        preview.style.top = (e.pageY + 30) + "px";
-        if (activeaudio != null)
-            activeaudio.removeEventListener("timeupdate",updatePlayhead)
-        activeaudio = row.parentElement.querySelector("audio");
-        activeaudio.addEventListener("timeupdate", updatePlayhead);
-
-    });
-
-    row.addEventListener("mouseleave", () => {
-        if (!pinnedspectro)
-            preview.style.display = "none";
-    });
-
-    row.addEventListener("click", () => {
-        pinnedspectro = !pinnedspectro
-    });
-});
-
-
-function updatePlayhead() {
-
-    if (!activeaudio.duration)
-        return;
-
-    const x =
-        (activeaudio.currentTime / activeaudio.duration) *
-        image.clientWidth;
-
-    playhead.style.left = `${x}px`;
-}
-
-
-
-document
-.querySelectorAll(".weather-item")
-.forEach(row => {
-    row.addEventListener("mouseenter", e => {
-        const eventId = row.dataset.eventId;
-        weather.innerHTML = eventId
-        weather.style.display = "block";
-        weather.style.left = (e.pageX + 20) + "px";
-        weather.style.top = (e.pageY + 30) + "px";
-    });
-
-    row.addEventListener("mouseleave", () => {
-        weather.style.display = "none";
-    });
-});
-
-document.querySelectorAll('fieldset legend').forEach(legend => {
-  legend.addEventListener('click', () => {
-    // Find the closest parent fieldset and toggle the class
-    legend.closest('fieldset').classList.toggle('collapsed');
-  });
-});
-
-
-const last_heard_things = [];
-last_heard_update = 0;
-
-async function updateSoundscapeHTML(data) {
-    const max_msg = 10;
-    try {
-        if (data["last_update"] > last_heard_update) {
-            const msg = data["label"] + " " + data["confidence"];
-            last_heard.innerHTML = "&#x1F442 " + msg;
-            last_heard_things.push(msg);
-            if (last_heard_things.length > max_msg)
-                last_heard_things.shift();
-            
-            last_heard.title = last_heard_things.toReversed().join("\\n");
-            last_heard_update = data["last_update"];
-        }
-    } catch (err) {
-        console.log(err);
-    }
-}
-
-
-const toast = document.getElementById("toast");
-var toastTimeout = setTimeout(() => {{
-    if (toast) toast.style.display = "none";
-    toastTimeout = null;
-}}, 5000);
-
 """
-
-
-
     if MESSAGING=="SSE":
         html += """
-const evt = new EventSource('/event_stream');
-evt.addEventListener('soundscape', (event) => {
-    try {
-        var data = JSON.parse(event.data);
-        updateSoundscapeHTML(data);
-    } catch (err) {
-        console.log(err);
-    }
-});
-
-evt.addEventListener('notification', (event) => {
-    try {
-        var data = JSON.parse(event.data);
-        
-        
-        if (toastTimeout) {
-            // it's already displayed... extend and add
-            clearTimeout(toastTimeout)
-            toast.innerHTML += data.message + "<br>";            
-        } else {
-            toast.innerHTML = data.message + "<br>";
-            toast.style.display = "block";
-        }
-
-        toastTimeout = setTimeout(() => {{
-            if (toast) toast.style.display = "none";
-            toastTimeout = null;
-        }}, 5000);        
-    } catch (err) {
-        console.log(err);
-    }
-});
-// to make sure the browser releases the SSE connection
-window.addEventListener("pagehide", () => {
-    evt.close();
-});
 """
 
     if MESSAGING=="POLLING":
@@ -371,12 +248,15 @@ def make_label_select():
     return html
     
 def make_label_form(rec = None, file = None, route = None):
+    global EXTERNS
     found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
     html = ""
     if found:
         html += f"<form method=\"POST\" action=\"/label_apply\">"
         html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
         html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
+        if EXTERNS:
+            html += f"<span onclick=\"showShareDialog({rec})\">&#127758;</span> "
         html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
         
         if route is not None:
@@ -424,7 +304,7 @@ def make_weather(weather):
     if weather["rain_rate_mm"] > 0:
         html += "&#9748; Raining"
     else:
-        html += "Not raining"
+        html += " Not raining"
     return html
 
 def label_to_name( label ):
@@ -479,7 +359,24 @@ def make_detection( id, recorded, animal, confidence, file, labeled, curated, we
     html += make_label_form( rec=id, file=file, route=route )
     html += "</div>"
     return html
-    
+
+@app.route("/api/detection/<detectionId>")
+def detection_get(detectionId):
+    conn = get_db()
+    cur = conn.cursor()
+
+    rec = int(detectionId)
+
+    cur.execute(f"""SELECT detections.id, detections.recorded_ts, species, confidence, file, labeled, curated
+        FROM detections WHERE detections.id = ?""",[detectionId])
+
+    rows = cur.fetchall()
+    label = rows[0][2]
+    if rows[0][5] is not None:
+        label = rows[0][5]
+
+    return {"detectionId": detectionId, "label": label, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]), "file": rows[0][4]}
+
 @app.route("/")
 def index():
     if len(heket_config.RTSP_URL) == 0:
@@ -517,11 +414,11 @@ def index():
 #            when labeled is not null then 1
 #        end as validated
     cur.execute(f"""
-    SELECT detections.id, detections.recorded,
+    SELECT detections.id, detections.recorded_ts,
         species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
     FROM detections left join weather on detections.weather_id = weather.weather_id
     WHERE confidence > ? and ((labeled is null and species not like ?) or (labeled is not null and labeled not like ?))
-    ORDER BY detections.recorded DESC
+    ORDER BY detections.recorded_ts DESC
     LIMIT ? offset ?
     """,[heket_config.CONF_STRONG, "nonfrog_%", "nonfrog_%", limit, (frog_page - 1) * limit])
 
@@ -535,7 +432,7 @@ def index():
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather)
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather)
         html += "</li>"
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
@@ -569,7 +466,7 @@ def index():
             if r[3] is None:
                 html += f"since {r[2][:16]}"
             else:
-                html += f"from {r[2][:16]} until {r[3][:16]}"
+                html += f"from {turtlepond.dates.epoch_to_local(r[2])} until {turtlepond.dates.epoch_to_local(r[3])}"
                 if r[5] is not None and r[6] is not None:
                     html += f"<br>{r[4]} detections ranging from {r[5]:.2f} to {r[6]:.2f}"
             html += "</li>"
@@ -650,7 +547,7 @@ def index():
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute(f"""
-    SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
+    SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
     FROM detections left join weather on detections.weather_id = weather.weather_id
     WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
     ORDER BY confidence asc
@@ -660,7 +557,7 @@ def index():
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>"
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
         html += "</li>"
         html += "<br>"
 
@@ -897,6 +794,11 @@ def model_reload():
     flash("Model list reloaded")
     return redirect(url_for("index"))
 
+def window_datetime( dt ):
+    date = turtlepond.dates.isodate_to_epoch(dt)
+
+    return [date - 1 - int(heket_config.SEGMENT_TIME / 2),date + 1 + int(heket_config.SEGMENT_TIME / 2)]
+
 @app.route("/detections_delete", methods=["POST"])
 def detections_delete():
     start = request.form["start"]
@@ -907,16 +809,16 @@ def detections_delete():
     
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{start}%"])
+    cur.execute(f"""select min(id) from detections where recorded_ts > ? and recorded_ts < ?""", window_datetime(start))
     rows = cur.fetchall()
 
-    if len(rows) > 0:
+    if len(rows) > 0 and rows[0][0] is not None:
         start_id = rows[0][0]
 
-    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{stop}%"])
+    cur.execute(f"""select max(id) from detections where recorded_ts > ? and recorded_ts < ?""", window_datetime(stop))
     rows = cur.fetchall()
 
-    if len(rows) > 0:
+    if len(rows) > 0 and rows[0][0] is not None:
         stop_id = rows[0][0]
 
     if stop_id != 0 and start_id != 0:
@@ -1020,14 +922,14 @@ def review_event_page(review_id=0, detection_id=0):
         cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
         rows = cur.fetchall()
         detection_id = rows[0][0]
-        html += f"Reported: {rows[0][1]}" + str(rows[0][0]) + "<br>"
+        html += f"Reported: {rows[0][1]}<br>"
     
     high = detection_id + int((2 * 60) / heket_config.SEGMENT_TIME)
     low = detection_id - int((5 * 60) / heket_config.SEGMENT_TIME)
 
     html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    cur.execute(f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
+    cur.execute(f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
     
     rows = cur.fetchall()
     for r in rows:
@@ -1039,7 +941,7 @@ def review_event_page(review_id=0, detection_id=0):
             route = url_for("review_process") + "?id=" + str(review_id)
  
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=route)
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=route)
         html += "</li><br>"
         
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
@@ -1135,7 +1037,7 @@ def class_review():
     html += "</form></div></fieldset>"
     
     sql_pages = f"""SELECT count(*) FROM detections WHERE """
-    sql_query = f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_query = f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
     sql_args = []
 
     if labeled == "Y":
@@ -1191,7 +1093,7 @@ def class_review():
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
         html += "</li><br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("class_review", "page", page, max_page) + "</li>"
@@ -1267,12 +1169,12 @@ def review_manual():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""select id, recorded from detections where recorded like ?""", [f"{time}%"])
+    cur.execute(f"""select min(id) from detections where recorded_ts > ? and recorded_ts < ?""", window_datetime(time))
     rows = cur.fetchall()
     html = "<h1>Event Creation</h1><ul>"
-    if len(rows) > 0:
+    if len(rows) > 0 and rows[0][0] is not None:
         detection_id = rows[0][0]
-        cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, rows[0][1]])
+        cur.execute("""insert into reviews (detection_id, recorded) values (?,?)""", [detection_id, time])
         conn.commit()
         html += "&#9989; The event was found and created."
 
@@ -1316,6 +1218,9 @@ def spectrogram(id):
 
 @app.route("/setup", methods=["GET"])
 def setup():
+    global CAPS
+    global EXTERNS
+
     long_size = 75
     html = ""
     html += "<h1>Setup Heket</h1>"
@@ -1355,13 +1260,21 @@ def setup():
     html += "<button type=\"submit\">Save</button>"
     html += "</form><br>"
     
-    if False:
+    if EXTERNS:
         html += "<h2>Link to TurtlePond.us</h2>TurtlePond.us can help you easily share recordings with sites such as iNaturalist. No complicated registration required.<br><br>"
         ok = False
-        if heket_config.TURTLEPOND_KEY == None or not heket_common.test_key():
+
+        res = conf = None
+        if heket_config.TURTLEPOND is not None:
+            res, conf = heket_common.test_key()
+
+
+        if heket_config.TURTLEPOND_KEY == None or not res:
             html += "The link has not been established or is broken."
         else:
-            html += "The link is working correctly."
+            
+            html += "The link is working correctly. Reported capabilities are " + ", ".join(conf["capabilities"]) + ". "
+            CAPS = conf["capabilities"]
             ok = True
             
         html += "  <form style=\"display: inline\" method=\"POST\" action=\"turtlepond_link\" onsubmit=\"return confirm('Do you want to reconnect?')\"><button type=\"submit\">Reconnect</button></form>"
@@ -1378,7 +1291,7 @@ def turtlepond_link():
     key = heket_common.key_generate()
 
     try:
-        response = requests.post(heket_config.TURTLEPOND + "device_register", json={"device_key": key})
+        response = requests.post(heket_config.TURTLEPOND + "device/register", json={"device_key": key})
 
         if response.status_code == 200:
             heket_config.save_config_value("HEKET_TURTLEPOND_KEY",key)
@@ -1393,7 +1306,7 @@ def turtlepond_link():
 @app.route("/turtlepond_manage", methods=["POST"])
 def turtlepond_manage():
     try:
-        response = requests.get(heket_config.TURTLEPOND + "session_create", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        response = requests.post(heket_config.TURTLEPOND + "session", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
         if response.status_code == 200:
             res = response.json()
             return redirect(res["url"])
@@ -1491,16 +1404,16 @@ def bout_create():
     
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""select min(id) from detections where recorded like ?""", [f"{bout_start}%"])
+    cur.execute(f"""select min(id) from detections where recorded_ts > ? and recorded_ts < ?""", window_datetime(bout_start))
     rows = cur.fetchall()
-    if len(rows) > 0:
+    if len(rows) > 0 and rows[0][0] is not None:
         bout_start_id = rows[0][0]
     else:
         flash("Bout start time not found")
         
-    cur.execute(f"""select max(id) from detections where recorded like ?""", [f"{bout_end}%"])
+    cur.execute(f"""select max(id) from detections where recorded_ts > ? and recorded_ts < ?""", window_datetime(bout_end))
     rows = cur.fetchall()
-    if len(rows) > 0:
+    if len(rows) > 0 and rows[0][0] is not None:
         bout_end_id = rows[0][0]
     else:
         flash("Bout end time not found")
@@ -1511,7 +1424,7 @@ def bout_create():
         bout_end_id = temp
         
     # so we have the start and end now.. we need the information for the bout
-    cur.execute(f"""select min(recorded), max(recorded), min(confidence), max(confidence), avg(confidence), count(*) 
+    cur.execute(f"""select min(recorded_ts), max(recorded_ts), min(confidence), max(confidence), avg(confidence), count(*) 
         from detections where id >= ? and id <= ? and bout_id is null and ((species = ? and labeled is null) or (labeled = ?))""", [bout_start_id, bout_end_id, species, species])
     rows = cur.fetchall()
     if len(rows) > 0:
@@ -1598,7 +1511,7 @@ def bout_review():
     html += "</form>"
 
     sql_pages = f"""SELECT count(*) FROM detections WHERE """
-    sql_query = f"""SELECT id, detections.recorded, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_query = f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
     sql_args = []
 
     if labeled == "Y":
@@ -1643,7 +1556,7 @@ def bout_review():
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = r[1], animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        html += make_detection(id = r[0], recorded = turtlepond.date.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
         html += "</li><br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("bout_review", "page", page, max_page) + "</li>"

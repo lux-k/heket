@@ -48,8 +48,8 @@ def db_setup():
     CONN.cursor().execute("""
     CREATE TABLE IF NOT EXISTS detections (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recorded TEXT,
-        processed TEXT,
+        recorded_ts int,
+        processed_ts int,
         species TEXT,
         confidence REAL,
         file TEXT,
@@ -97,12 +97,6 @@ def db_setup():
     )
     """)
 
-    ensure_column(CONN, "detections", "labeled", "TEXT")
-    ensure_column(CONN, "detections", "curated", "INT")
-    ensure_column(CONN, "detections", "weather_id", "INT")
-    ensure_column(CONN, "detections", "bout_id", "INT")
-    ensure_column(CONN, "bouts", "notes", "TEXT")
-    
     CONN.commit()
     CONN.close()
 
@@ -125,10 +119,11 @@ def key_generate():
 
 def test_key():
     try:
-        response = requests.get(heket_config.TURTLEPOND + "ping", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        print(heket_config.TURTLEPOND + "device/ping")
+        response = requests.get(heket_config.TURTLEPOND + "device/ping", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
         
         if response.status_code == 200:
-            return True
+            return True, response.json()
         else:
             return False
     except Exception as e:

@@ -1,5 +1,3 @@
-#https://www.inaturalist.org/oauth/app_owner_application
-#https://www.inaturalist.org/oauth/applications
 from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, jsonify, abort
 import time
 import sqlite3
@@ -10,6 +8,9 @@ import random
 import uuid
 import sys
 from pathlib import Path
+import os
+import turtlepond.crypto
+import turtlepond.dates
 
 parent_dir = str(Path(__file__).resolve().parent.parent)
 
@@ -19,6 +20,18 @@ if parent_dir not in sys.path:
 import heket_config
 import heket_common
 
+if True:
+    key = os.getenv("HEKET_CRYPTO_KEY", "")
+    if len(key) == 0:
+        key = turtlepond.crypto.Cipher.make_key()
+        heket_config.save_config_value("HEKET_CRYPTO_KEY", turtlepond.crypto.Cipher.pack(key))
+    else:
+        key = turtlepond.crypto.Cipher.unpack(key)
+
+    heket_config.CRYPTO = turtlepond.crypto.Cipher(key)
+
+import heket_inaturalist
+
 SESSIONS = {}
 WORDS = ['frog','toad','tadpole','pollywog','treefrog','bullfrog']
 
@@ -26,7 +39,6 @@ os.makedirs(heket_config.DATA_DIR, exist_ok=True)
 
 def get_db():
     return heket_common.get_db()
-    sqlite3.connect(heket_config.DB_FILE)
 
 heket_common.db_setup()
 
@@ -55,11 +67,11 @@ setTimeout(() => {{
 }}, 5000);
 
 </script>
-<link rel="stylesheet" href="web_assets/style.css">
-<link rel="apple-touch-icon" sizes="180x180" href="web_assets/icons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="web_assets/icons/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="web_assets/icons/favicon-16x16.png">
-<link rel="manifest" href="web_assets/icons/site.webmanifest">
+<link rel="stylesheet" href="/web_assets/style.css">
+<link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/web_assets/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/web_assets/icons/favicon-16x16.png">
+<link rel="manifest" href="/web_assets/icons/site.webmanifest">
 </head><body>
 """    
     messages = get_flashed_messages()
@@ -71,10 +83,10 @@ setTimeout(() => {{
         html += "</div>"
         
     html +="<div style=\"width: 100%; margin-bottom: 20px; text-align: center;\">"
-    html += f"<img src=\"web_assets/heket_logo_small.png\"></div><br>"
+    html += f"<img src=\"/web_assets/heket_logo_small.png\"></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
-    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
+    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"/web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += """
 """
@@ -85,7 +97,7 @@ setTimeout(() => {{
 def assets(filename):
     return send_from_directory("../web_assets", filename)
 
-@app.route("/device_register", methods=["POST"])
+@app.route("/device/register", methods=["POST"])
 def device_register():
     req = request.get_json() 
     #gets the key K from the device
@@ -109,14 +121,15 @@ def device_register():
         if len(rows) == 0:
             cur.execute(f"""insert into challenges (device_id, challenge, expires) values (?,?,?)""", [device_id, challenge, time.time() + 600])
             conn.commit()
-            return jsonify({"challenge": challenge, "status": "pending", "challenge_url": f"{heket_config.TURTLEPOND}device_link"})
+            return jsonify({"challenge": challenge, "status": "pending", "challenge_url": f"{heket_config.TURTLEPOND}device/link"})
         else:
             abort(403)
     else:
         abort(403)
 
-@app.route("/device_link", methods=["GET"])
-@app.route("/device_link/<code>", methods=["GET"])
+@app.route("/api/device/link", methods=["GET"])
+@app.route("/device/link", methods=["GET"])
+@app.route("/device/link/<code>", methods=["GET"])
 def device_link(code=None):
     if code is not None:
         return link_challenge_confirm(code)
@@ -124,7 +137,7 @@ def device_link(code=None):
         html = "<h1>Link Your Device</h1>"
         html += "<ul>Linking your device allows you to use TurtlePond to share your recording with websites such as iNaturalist.<br><br>To complete this process:"
         html += "<ol><li>Go to your Heket web console.<li>Click on the Settings gear at the bottom of the page.<li>Click the Link or Relink button.<li>Copy the displayed code to the box below.</ol>"
-        html += "<form method=\"POST\" action=\"device_link_process\">"
+        html += f"<form method=\"POST\" action=\"/api/{ url_for('device_link_process') }\">"
         html += "<h2>Enter Your Code</h2><select name=\"word\">"
         global WORDS
         for w in WORDS:
@@ -132,8 +145,8 @@ def device_link(code=None):
         html += "</select> &#8212; <input name=\"number\"><br><br><button type=\"submit\">Link</button>"
             
         return make_page(title="Link your Heket device",content=html)
-    
-@app.route("/device_link_process", methods=["POST"])
+
+@app.route("/device/link/confirm", methods=["POST"])
 def device_link_process():
     word = request.form["word"]
     number = request.form["number"]
@@ -181,13 +194,26 @@ def auth_device():
     else:
         return rows[0][0]
 
-@app.route("/ping", methods=["GET"])
+@app.route("/device/ping", methods=["GET"])
 def ping():
     device_id = auth_device()
     
-    return jsonify({"status": "OK"})
+    return {"status": "OK", "capabilities": get_device_caps(device_id)}
 
-@app.route("/session_create", methods=["GET"])
+def get_device_caps(device_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select provider from external_accounts where device_id = ?""", [device_id])
+    rows = cur.fetchall()
+
+    caps = ['turtlepond']
+
+    for r in rows:
+        caps.append(r[0].lower())
+
+    return caps
+
+@app.route("/session", methods=["POST"])
 def session_create():
     device_id = auth_device()
     
@@ -198,15 +224,65 @@ def session_create():
     return jsonify({"session": sess_id, "url": f"{heket_config.TURTLEPOND}session/{sess_id}"})
 
 @app.route("/session/<path:sess_id>", methods=["GET"])
-def session(sess_id):
+def session_get(sess_id):
     global SESSIONS
-    
-    if sess_id not in SESSIONS or SESSIONS[sess_id]["expires"] < time.time():
-        abort(403)
-        
-    SESSIONS[sess_id]["expires"] = time.time() + 600
 
-    return "Hello! " + str(SESSIONS[sess_id]["device_id"])
+    session["id"] = sess_id
+
+    device_id = validate_session()
+
+    html = f"iNaturalist link: "
+    if heket_inaturalist.is_device_linked(device_id):
+        html += "✅"
+    else:
+        html += "🚫"
+
+    html += " <form style=\"display: inline\" method=\"POST\" action=\"../link/inaturalist\"><button>Reauthorize</button></form>"
+    return make_page(title="Manage Integrations",content=html)
+
+def validate_session():
+    global SESSIONS
+
+    if "id" not in session:
+        abort(403)
+
+    if session["id"] not in SESSIONS or SESSIONS[session["id"]]["expires"] < time.time():
+        abort(403)
+
+    SESSIONS[session["id"]]["expires"] = time.time() + 600
+
+    return SESSIONS[session["id"]]["device_id"]
+
+@app.route("/link/inaturalist", methods=["POST"])
+def inaturalist_link():
+    validate_session()
+
+    code = make_challenge()
+    session["inat-code"] = code
+
+    url = heket_inaturalist.INATURALIST_URL + "&state=" + code
+
+    return redirect(url)
+
+@app.route("/oauth/inaturalist/callback", methods=["GET"])
+def inaturalist_callback():
+    dev_id = validate_session()
+
+    if "inat-code" not in session or session["inat-code"] != request.args["state"]:
+        print("State code doesn't match")
+        abort(403)
+
+    resp = heket_inaturalist.exchange_oauth_code_for_token(request.args["code"])
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("delete from external_accounts where device_id = ? and provider = ?",[dev_id,'iNaturalist'])
+    cur.execute("""insert into external_accounts (device_id, provider,access_token,connected) values (?,?,?,?)""", [dev_id,'iNaturalist',heket_config.CRYPTO.encrypt(resp["access_token"]),turtlepond.dates.get_epoch()])
+    conn.commit()
+    conn.close()
+
+    html = "OAuth flow finished"
+    return make_page(title="Manage Integrations",content=html)
 
 def maintenance():
     clean_sessions()
@@ -248,6 +324,7 @@ CONN = get_db()
 #CONN.cursor().execute("""drop table if exists challenges""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS devices (device_id integer primary key autoincrement, device_key_hash text, status text, created text, linked text)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS challenges (challenge_id integer primary key autoincrement, device_id int, challenge text, expires int)""")
+CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS external_accounts (external_account_id integer primary key autoincrement, device_id int, provider text, provider_user_id text, provider_user_name text, access_token text, connected int)""")
 #CONN.cursor().execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_challenge_unq ON challenges(challenge)""")
 CONN.commit()
 CONN.close()
