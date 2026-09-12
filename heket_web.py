@@ -105,7 +105,7 @@ def make_page(title = "Home", content = ""):
     global ALERTS
     global MESSAGING
     update_alerts()
-    html = f"<html><head><title>Heket v{heket_config.VERSION}: {title}</title>"
+    html = f"<html><head><title>Heket v{heket_config.VERSION:.2f}: {title}</title>"
     html += """
 <link rel="stylesheet" href="web_assets/style.css">
 <link rel="apple-touch-icon" sizes="180x180" href="/web_assets/icons/apple-touch-icon.png">
@@ -157,7 +157,7 @@ def make_page(title = "Home", content = ""):
     html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a><div id=\"last-heard\"></div></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
-    html += f"Heket v{heket_config.VERSION} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
+    html += f"Heket v{heket_config.VERSION:.2f} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += """
 <script>
