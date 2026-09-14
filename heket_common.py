@@ -97,6 +97,16 @@ def db_setup():
     )
     """)
 
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS detection_shares (
+        share_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT,
+        provider_id text,
+        detection_id int,
+        share_ts int
+    )
+    """)
+
     CONN.commit()
     CONN.close()
 

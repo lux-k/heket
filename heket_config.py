@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.20
+VERSION = 0.21
 
 load_dotenv()
 
@@ -85,7 +85,7 @@ def reload():
 
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", os.path.join("models", "frog_model.pkl"))
     RTSP_URL = os.getenv("HEKET_RTSP_URL","")
-    MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "mfcc_simple")
+    MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "cnn_sg")
     SAMPLE_RATE = int(os.getenv("HEKET_SAMPLE_RATE", 16000))
     SEGMENT_TIME = int(os.getenv("HEKET_SEGMENT_TIME", 15))
 

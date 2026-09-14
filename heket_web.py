@@ -1,5 +1,5 @@
 import threading
-from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
+from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response, abort
 import time
 import sqlite3
 import heket_config
@@ -20,6 +20,8 @@ from urllib.parse import urlencode
 import requests
 import queue
 import turtlepond.dates
+import tarfile
+import re
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -41,15 +43,39 @@ SUBSCRIBERS_LOCK = threading.Lock()
 MESSAGING="SSE"
 
 CAPS = None
-EXTERNS = False
+EXTERNS = True
+PACK_CACHE = []
+PACK_DL = False
+
+SHARES_IN_PROGRESS = {}
 
 if EXTERNS:
     def update_caps():
-        res, conf = heket_common.test_key()
+        global CAPS
+
+        try:
+            res, conf = heket_common.test_key()
+        except Exception as e:
+            res = False
+
         if res:
             CAPS = conf["capabilities"]
-
     threading.Thread(target=update_caps, daemon=True).start()
+
+def sharing_ok():
+    global EXTERNS
+    global CAPS
+
+    if EXTERNS is False:
+        return False
+
+    if CAPS is None:
+        return False
+
+    if len(CAPS) == 0:
+        return False
+
+    return True
 
 def get_db():
     return heket_common.get_db()
@@ -124,16 +150,17 @@ def make_page(title = "Home", content = ""):
     <h2>Share Detection</h2>
     <ul><span id="share_detection_text"></span></ul>
 
-    <h2>With</h2>
-    <ul><span id="share_detection_recips"><input type="checkbox" value="iNaturalist">iNaturalist<br><input type="checkbox" value="turtlepond">TurtlePond.us Clip Collection</span>
-    
     <form>
-    <input type="hidden" id="attachment_observation_id" name="observation_id">
+    <h2>With</h2>
+    <ul><span id="share_detection_recips"></span>
+
+    <input type="hidden" id="share_detection_id" name="detection_id">
     
-    </form>
     </ul>
     <center>
-    <br><button type="button" onclick="uploadAttachment()">Share</button>  <button type="button" onclick="this.closest('dialog').close()">Cancel</button><br><br>
+    <br><button type="button" onclick="shareDetection()">Share</button>  <button type="button" onclick="this.closest('dialog').close()">Cancel</button><br><br>
+    </form>
+
     </center>
     </form>
 </dialog>
@@ -248,15 +275,14 @@ def make_label_select():
     return html
     
 def make_label_form(rec = None, file = None, route = None):
-    global EXTERNS
     found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
     html = ""
     if found:
         html += f"<form method=\"POST\" action=\"/label_apply\">"
         html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
         html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
-        if EXTERNS:
-            html += f"<span onclick=\"showShareDialog({rec})\">&#127758;</span> "
+        if sharing_ok():
+            html += f"<span style=\"cursor: pointer;\" onclick=\"showShareDialog({rec})\">&#127758;</span> "
         html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
         
         if route is not None:
@@ -359,23 +385,6 @@ def make_detection( id, recorded, animal, confidence, file, labeled, curated, we
     html += make_label_form( rec=id, file=file, route=route )
     html += "</div>"
     return html
-
-@app.route("/api/detection/<detectionId>")
-def detection_get(detectionId):
-    conn = get_db()
-    cur = conn.cursor()
-
-    rec = int(detectionId)
-
-    cur.execute(f"""SELECT detections.id, detections.recorded_ts, species, confidence, file, labeled, curated
-        FROM detections WHERE detections.id = ?""",[detectionId])
-
-    rows = cur.fetchall()
-    label = rows[0][2]
-    if rows[0][5] is not None:
-        label = rows[0][5]
-
-    return {"detectionId": detectionId, "label": label, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]), "file": rows[0][4]}
 
 @app.route("/")
 def index():
@@ -863,7 +872,185 @@ def detection_delete( recs ):
 
     conn.commit()
     conn.close()
-         
+
+@app.route("/api/detection/<detectionId>/share", methods=["POST"])
+def detection_share(detectionId):
+    global SHARES_IN_PROGRESS
+
+    data = request.get_json()
+
+    detectionId = int(detectionId)
+
+    print("Send detection", detectionId, "to",data["recipients"])
+    detection = detection_get(detectionId)
+    #verify all recipients are valid
+    for recip in data["recipients"]:
+        if not any(d["value"] == recip for d in detection["shareable"]):
+            abort(400)
+
+    if len(data["recipients"]) == 0:
+        abort(400)        
+
+    share_cfg = share_conf()
+
+    simple_notify("Sharing detection...")
+    for recip in data["recipients"]:
+        SHARES_IN_PROGRESS[f"{recip}-{str(detectionId)}"] = turtlepond.dates.get_epoch()
+        threading.Thread(target=share_cfg[recip]["share_fn"], kwargs={"detectionId": detectionId, "detection": detection}, daemon=True).start()
+
+    return {"status": True}
+
+def share_turtlepond(detectionId=None,detection=None,bulk=False):
+    if detectionId is None or detection is None:
+        return False
+
+    file = os.path.join(heket_config.OUT_DIR, detection["file"])
+    if not os.path.isfile(file):
+        return False
+
+    provider = "turtlepond"
+    with open(file, "rb") as f:
+        files = {"audio": f}
+        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": detection.get("species", None), "label": detection["label"]}
+        response = requests.post(heket_config.TURTLEPOND + "share/turtlepond", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+
+    if response.status_code == 200:
+        resp = response.json()
+        if not bulk:
+            simple_notify(f"TurtlePond.us accepted clip {str(resp['id'])}")
+        share_record(detectionId=detectionId,provider=provider,providerId=str(resp["id"]))
+        return True, response.json()
+    else:
+        share_clear_in_progress(provider=provider, detectionId=detectionId)
+        return False
+
+@app.route("/share_turtlepond_bulk", methods=["POST"])
+def share_turtlepond_bulk():
+    clip_count = int(request.form["clip_count"])
+    label = request.form["label"]
+    req = request.form["route"]
+
+    threading.Thread(target=share_turtlepond_bulk_thread, kwargs={"label": label, "max_count": clip_count}, daemon=True).start()
+    flash(f"Beginning bulk share of {clip_count} {label} labeled detections to TurtlePond")
+    return redirect(req)
+
+def share_turtlepond_bulk_thread(label=None, max_count=0):
+    global SHARES_IN_PROGRESS
+    time.sleep(3)
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(f"""select d.id from detections d left join detection_shares s on d.id = s.detection_id where d.labeled= ? and s.detection_id is null order by random() limit ?""", [label, max_count])
+    rows = cur.fetchall()
+    print(rows)
+
+    count = 0
+
+    for r in rows:
+        SHARES_IN_PROGRESS[f"turtlepond-{str(r[0])}"] = turtlepond.dates.get_epoch()
+        share_turtlepond(r[0], detection_get(r[0]), bulk=True)
+        count = count + 1
+        if count % 5 == 0:
+            simple_notify(f"Shared {str(count)} out of a max of {str(max_count)} {label} clips")
+
+    simple_notify(f"Bulk share of {str(count)} {label} clips complete")
+
+def share_inaturalist(detectionId=None,detection=None):
+    if detectionId is None or detection is None:
+        return False
+
+    time.sleep(3)
+
+    file = os.path.join(heket_config.OUT_DIR, detection["file"])
+    if not os.path.isfile(file):
+        return False
+
+    provider = "inaturalist"
+    with open(file, "rb") as f:
+        files = {"audio": f}
+        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": detection["species"]}
+        response = requests.post(heket_config.TURTLEPOND + "share/inaturalist", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+
+    if response.status_code == 200:
+        resp = response.json()
+        simple_notify(f"iNaturalist accepted observation {str(resp['id'])}")
+        share_record(detectionId=detectionId,provider=provider,providerId=str(resp["id"]))
+        return True, response.json()
+    else:
+        share_clear_in_progress(provider=provider, detectionId=detectionId)
+        return False
+
+def share_record(detectionId=None,provider=None,providerId=None):
+    conn = get_db()
+    cur = conn.cursor()
+
+    rec = int(detectionId)
+
+    cur.execute(f"""insert into detection_shares (provider, provider_id, detection_id, share_ts) values (?,?,?,?)""",[provider,providerId,detectionId,turtlepond.dates.get_epoch()])
+    conn.commit()
+    share_clear_in_progress(provider=provider, detectionId=detectionId)
+
+def share_clear_in_progress(provider, detectionId):
+    global SHARES_IN_PROGRESS
+    SHARES_IN_PROGRESS.pop(f"{provider}-{str(detectionId)}", None)
+
+@app.route("/api/detection/<detectionId>", methods=["GET"])
+def detection_get(detectionId):
+    global CAPS
+    global SHARES_IN_PROGRESS
+    conn = get_db()
+    cur = conn.cursor()
+
+    rec = int(detectionId)
+
+    cur.execute(f"""SELECT detections.id, detections.recorded_ts, species, confidence, file, labeled, curated
+        FROM detections WHERE detections.id = ?""",[detectionId])
+
+    rows = cur.fetchall()
+    label = rows[0][2]
+    if rows[0][5] is not None:
+        label = rows[0][5]
+
+    shareable = []
+
+    species = None
+
+    share_cfg = share_conf()
+
+    shared = []
+    cur.execute(f"""SELECT provider, provider_id from detection_shares where detection_id = ?""", [detectionId])
+    rows3 = cur.fetchall()
+    for r in rows3:
+        shared.append({"provider": r[0], "name": share_cfg[r[0]]["name"], "id": r[1], "url": share_cfg[r[0]]["url"](r[1])})
+
+    if CAPS is not None:
+        cur.execute(f"""SELECT latin_name from species where label_name = ?""", [label])
+        rows2 = cur.fetchall()
+
+        if len(rows2) == 1:
+            species = rows2[0][0]
+
+        for k in share_cfg.keys():
+            if k in CAPS and f"{k}-{str(detectionId)}" not in SHARES_IN_PROGRESS and not any(d.get("provider") == k for d in shared):
+                if k == "turtlepond":
+                    shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"]})
+                if k == "inaturalist":
+                    #requires a species
+                    if species is not None and not any(d["provider"] == "inaturalist" for d in shared):
+                        shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"]})
+
+    result = {"detectionId": detectionId, "label": label, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]),
+             "file": rows[0][4], "shareable": shareable, "species": species, "shared": shared}
+
+    return result
+
+def share_conf():
+    return {"inaturalist": {"provider": "inaturalist", "name": "iNaturalist", "url": lambda x: f"https://www.inaturalist.org/observations/{x}",
+                             "share_fn": share_inaturalist, "privacy_warning":"Includes the detection audio, date/time, latitude, longitude and reported species."},
+            "turtlepond": {"provider": "turtlepond", "name": "TurtlePond.us", "url": lambda x: "", "share_fn": share_turtlepond,
+                           "privacy_warning": "Includes the detection audio, date/time, latitude, longitude, label and reported species."}}
+
 @app.route("/detection_delete", methods=["GET"])
 def detection_delete_web():
     rec = int(request.args["id"])
@@ -880,19 +1067,20 @@ def detection_delete_web():
         return redirect(route)
 
 @app.route("/model_switch", methods=["POST"])
-def model_switch():
+def model_switch_web():
     model = request.form["model"]
     
     if len(model) == 0:
         return redirect(url_for("index"))
-    
+
+    flash("Model switched")    
+    return redirect(url_for("index"))
+
+def model_switch(model):
     heket_config.save_config_value("HEKET_MODEL_FILE",os.path.join(heket_config.CUSTOM_MODEL_DIR, model))
     
     signal_pipeline()
     heket_config.reload()
-
-    flash("Model switched")
-    return redirect(url_for("index"))
 
 @app.route("/review_add", methods=["GET"])
 def review_add():
@@ -973,7 +1161,6 @@ def class_save():
 
     return redirect(req)
 
-
 def pull_value(var, default):
     review_class = request.args["class"]
     sess_key = "class " + review_class
@@ -985,10 +1172,9 @@ def pull_value(var, default):
     else:
         return default
 
-
-
 @app.route("/class_review", methods=["GET"])
 def class_review():
+    global CAPS
     review_class = request.args["class"]
     
     page = None
@@ -1035,7 +1221,16 @@ def class_review():
     html += f"Notes:<br><textarea name=\"notes\">{ vals['notes'] if vals['notes'] else ''}</textarea><br><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form></div></fieldset>"
-    
+
+    if sharing_ok():
+        html += "<fieldset class=\"collapsible collapsed\" style=\"width: 600px\"><legend>Bulk Share to TurtlePond.us</legend><div class=\"fieldset-content\"><form method=\"POST\" action=\"share_turtlepond_bulk\">"
+        html += f"Help grow TurtlePond.us's frog and toad clip collection! Bulk share your labeled detections.<input type=\"hidden\" name=\"label\" value=\"{review_class}\"><br><br>"
+        html += f"Max clip count:<br><input name=\"clip_count\" value=\"10\"><br>"
+        html += f"<input type=\"hidden\" name=\"route\" value=\"{request.full_path}\">"
+        html += "<small>&#9432; Each contribution includes the detection audio, date/time, latitude, longitude, label and reported species.</small><br><br>"
+        html += "<button type=\"submit\">Share</button>"
+        html += "</form></div></fieldset>"
+
     sql_pages = f"""SELECT count(*) FROM detections WHERE """
     sql_query = f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
     sql_args = []
@@ -1261,12 +1456,16 @@ def setup():
     html += "</form><br>"
     
     if EXTERNS:
-        html += "<h2>Link to TurtlePond.us</h2>TurtlePond.us can help you easily share recordings with sites such as iNaturalist. No complicated registration required.<br><br>"
+        html += "<h2>Link to TurtlePond.us</h2>Linking lets Heket download starter audio clips and contribute recordings to the shared corpus."
+        html += " It also enables integrations with services such as iNaturalist.<br>No complicated registration required.<br><br>"
         ok = False
 
         res = conf = None
         if heket_config.TURTLEPOND is not None:
-            res, conf = heket_common.test_key()
+            try:
+                res, conf = heket_common.test_key()
+            except Exception as e:
+                res = False
 
 
         if heket_config.TURTLEPOND_KEY == None or not res:
@@ -1280,11 +1479,108 @@ def setup():
         html += "  <form style=\"display: inline\" method=\"POST\" action=\"turtlepond_link\" onsubmit=\"return confirm('Do you want to reconnect?')\"><button type=\"submit\">Reconnect</button></form>"
 
         if ok:
-            html += "<br><br><form method=\"POST\" action=\"turtlepond_manage\"><button type=\"submit\">Manage Integrations</button></form>"
+            html += "<br><br><form style=\"display: inline\" method=\"POST\" action=\"turtlepond_manage\" target=\"_blank\"><button type=\"submit\">Manage Integrations</button></form>"
+            html += "  <form style=\"display: inline\" method=\"POST\" action=\"turtlepond_clips\"><button type=\"submit\">Download Clip Packs</button></form>"
             
     html += "</ul>"
 
     return make_page(title = "Setup", content = html)
+
+@app.route("/turtlepond_clips", methods=["POST","GET"])
+def turtlepond_clips():
+    global PACK_DL
+
+    try:
+        packs = get_packs(True)        
+        if packs is not None:
+            html = "<h1>Download TurtlePond.us Clip Packs</h1><ul>" 
+            html += "Clip packs from TurtlePond.us allow Heket to learn from community clips and enables your installation to be useful, faster. As you label and customize your installation, Heket will rely less on community clips and more on your own recordings.<br><br>"
+            html += "For best results, select packs for the frogs and toads you expect to hear, along with typical non-frog sounds such as birds, insects, traffic, and ambient noise.<br><br>"
+            html += "Select the clips you want added to your Heket installation. After the clips load, model retraining will happen automatically.<br><br>"
+            if not PACK_DL:
+                html += "<form method=\"POST\" action=\"/turtlepond_clips_download\">Available Clip Packs:<br><select name=\"packs\" multiple style=\"width: 200px;\">"
+                for p in packs:
+                    html += f"<option value=\"{str(p['pack_id'])}\">{p['label']}</option>"
+                html += "</select><br><br><button type=\"submit\">Add clip packs</button></form>"
+            else:
+                html += "Pack download already in progress. Please wait for it to complete."
+            html += "</ul>"
+            return make_page(title="Download Clip Packs", content=html)
+        else:
+            return make_page(title="Clip Download Failed", content="<h1>Clip Download Failed</h1>Please try again later.")
+    except Exception as e:
+        return make_page(title="Clip Download Failed", content="<h1>Clip Download Failed</h1>Please try again later.")
+
+@app.route("/turtlepond_clips_download", methods=["POST"])
+def turtlepond_clips_download():
+    global PACK_DL
+
+    if PACK_DL == False:
+        packs = request.form.getlist("packs")
+        PACK_DL = True
+        threading.Thread(target=download_install_packs, daemon=True, args=[packs]).start()
+        flash("Beginning clip pack download...")
+    else:
+        flash("Please waiting for existing pack download to finish.")
+
+    return redirect(url_for("turtlepond_clips"))
+
+def get_packs(override=False):
+    global PACK_CACHE
+
+    if PACK_CACHE is not None and override is False:
+        return PACK_CACHE
+    else:
+        response = requests.get(heket_config.TURTLEPOND + f"packs?sample_rate={str(heket_config.SAMPLE_RATE)}&duration={str(heket_config.SEGMENT_TIME)}", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        res = response.json()
+        PACK_CACHE = res
+        return PACK_CACHE
+
+def download_install_packs(packs):
+    global PACK_DL
+    global CUSTOM_MODELS
+
+    if len(packs) == 0:
+        PACKS_DL = False
+        return
+    try:
+        time.sleep(3)
+        all_packs = get_packs()
+        for pack in packs:
+            response = requests.get(heket_config.TURTLEPOND + f"packs/{str(pack)}", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+            response.raise_for_status()
+            response = response.json()
+            pack_info = next((item for item in all_packs if item.get("pack_id") == int(pack)), None)
+
+            if pack_info is None:
+                raise ValueError("Unknown pack found")
+            
+            with requests.get(response["url"], stream=True) as r:
+                r.raise_for_status()
+
+                # make sure to import the label to both the contrib area
+                # and to the normal label area
+                destination = os.path.join(heket_config.LABELED_DIR, "..", "contrib", pack_info["label"])
+                os.makedirs( os.path.join(heket_config.LABELED_DIR, pack_info["label"]), exist_ok=True)
+                os.makedirs( destination, exist_ok=True)
+
+                with tarfile.open(fileobj=r.raw, mode="r|*") as tar:
+                    for member in tar:
+                        if bool(re.match(r"^[0-9a-fA-F_]+\.wav$", member.name)):
+                            tar.extract(member, path=destination)
+            simple_notify(pack_info["label"] + " clip pack installed")              
+
+        simple_notify("All clip packs downloaded and installed")
+        simple_notify("Initiating model creation")
+        model_trainer_watcher()
+        model_switch(CUSTOM_MODELS[0])
+        simple_notify("Switching to newly built model " + CUSTOM_MODELS[0])
+
+    except Exception as e:
+        print("Pack install error:", e)
+        simple_notify("Error loading pack")
+    finally:
+        PACK_DL = False
 
 @app.route("/turtlepond_link", methods=["POST"])
 def turtlepond_link():

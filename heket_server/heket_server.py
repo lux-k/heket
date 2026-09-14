@@ -11,6 +11,9 @@ from pathlib import Path
 import os
 import turtlepond.crypto
 import turtlepond.dates
+import turtlepond.storage
+import soundfile as sf
+import json
 
 parent_dir = str(Path(__file__).resolve().parent.parent)
 
@@ -19,6 +22,8 @@ if parent_dir not in sys.path:
 
 import heket_config
 import heket_common
+
+STORAGE = None
 
 if True:
     key = os.getenv("HEKET_CRYPTO_KEY", "")
@@ -31,6 +36,15 @@ if True:
     heket_config.CRYPTO = turtlepond.crypto.Cipher(key)
 
 import heket_inaturalist
+
+def init_storage():
+    global STORAGE
+    STORAGE_CFG = json.loads(os.getenv("HEKET_STORAGE_CFG", '{"fs": {"base": "' + heket_config.REC_DIR + '"}}'))
+
+    backend = next(iter(STORAGE_CFG))
+    STORAGE = turtlepond.storage.create(type=backend, configuration=STORAGE_CFG[backend])
+
+init_storage()
 
 SESSIONS = {}
 WORDS = ['frog','toad','tadpole','pollywog','treefrog','bullfrog']
@@ -240,6 +254,59 @@ def session_get(sess_id):
     html += " <form style=\"display: inline\" method=\"POST\" action=\"../link/inaturalist\"><button>Reauthorize</button></form>"
     return make_page(title="Manage Integrations",content=html)
 
+@app.route("/packs", methods=["GET"])
+def packs_list():
+    device_id = auth_device()
+
+    sample_rate = request.args.get("sample_rate", type=int)
+    duration = request.args.get("duration", type=float)
+
+    result = []
+
+    #CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS clip_packs (pack_id integer primary key autoincrement, label text, audio_sr int, duration real, file text, update_ts int)""")
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""select pack_id, label, audio_sr, duration from clip_packs where audio_sr = ? and duration = ? order by label""", [sample_rate, duration])
+    rows = cur.fetchall()
+    for r in rows:
+        result.append( {"pack_id": r[0], "label": r[1], "sample_rate": r[2], "duration": r[3]} )
+
+    return result
+
+@app.route("/packs/<packId>", methods=["GET"])
+def pack_download(packId):
+    device_id = auth_device()
+
+    packId = int(packId)
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""select file, label from clip_packs where pack_id = ?""", [packId])
+    rows = cur.fetchall()
+    if len(rows) != 1:
+        abort(400)
+    else:
+        url = STORAGE.get_url(f"packs/{rows[0][1]}/{rows[0][0]}")
+        print(url)
+
+    return {"pack_id": packId, "url": url}
+
+def session_get(sess_id):
+    global SESSIONS
+
+    session["id"] = sess_id
+
+    device_id = validate_session()
+
+    html = f"iNaturalist link: "
+    if heket_inaturalist.is_device_linked(device_id):
+        html += "✅"
+    else:
+        html += "🚫"
+
+    html += " <form style=\"display: inline\" method=\"POST\" action=\"../link/inaturalist\"><button>Reauthorize</button></form>"
+    return make_page(title="Manage Integrations",content=html)
+
 def validate_session():
     global SESSIONS
 
@@ -252,6 +319,123 @@ def validate_session():
     SESSIONS[session["id"]]["expires"] = time.time() + 600
 
     return SESSIONS[session["id"]]["device_id"]
+
+@app.route("/share/inaturalist", methods=["POST"])
+def share_inaturalist():
+    device_id = auth_device()
+
+    file = request.files["audio"]
+    species = request.form["species"]
+    utc_ts = int(request.form["utc_ts"])
+    latitude = request.form["latitude"]
+    longitude = request.form["longitude"]
+    detection_id = int(request.form["detection_id"])
+
+    provider = "inaturalist"
+
+    dupe, id = share_check_dupe(device_id=device_id, detection_id=detection_id, provider=provider)
+    if dupe:
+        return {"shared": dupe, "id": id}
+
+    ok, response = heket_inaturalist.share_detection(device_id=device_id, species=species,utc_ts=utc_ts,latitude=latitude,longitude=longitude,sound=file)
+    #ok, response = True, {'id': 399699165}
+
+    resp = {"shared": ok}
+    
+    if ok:
+        resp["id"] = response["id"]
+        share_record(device_id=device_id,detection_id=detection_id,provider=provider,provider_id=resp["id"])
+
+    return resp
+
+@app.route("/share/turtlepond", methods=["POST"])
+def share_turtlepond():
+    device_id = auth_device()
+
+    file = request.files["audio"]
+    file.stream.seek(0, 2)
+    file_size = file.stream.tell()
+    file.seek(0)
+
+    species = request.form.get("species", None)
+    utc_ts = int(request.form["utc_ts"])
+    latitude = request.form["latitude"]
+    longitude = request.form["longitude"]
+    label = request.form["label"]
+    detection_id = int(request.form["detection_id"])
+
+    provider = "turtlepond"
+
+    dupe, id = share_check_dupe(device_id=device_id, detection_id=detection_id, provider=provider)
+    if dupe:
+        return {"shared": dupe, "id": id}
+
+    try:
+        ok, contrib_id = turtlepond_process_share(file=file, filesize=file_size, device_id=device_id, species=species, utc_ts=utc_ts, latitude=latitude,longitude= longitude,label=label,detection_id=detection_id)
+    except Exception as e:
+        print(e)
+        abort(400)
+
+    resp = {"shared": ok}
+    
+    if ok:
+        resp["id"] = contrib_id
+        share_record(device_id=device_id,detection_id=detection_id,provider=provider,provider_id=contrib_id)
+
+    return resp
+
+def get_contrib_path(file):
+    return "contrib/" + file[-3:] + "/" + file
+
+def get_pack_path(file):
+    return "packs/" + file
+
+def turtlepond_process_share(file=None, filesize=None, species=None, utc_ts=None, latitude=None, longitude=None,label=None,detection_id=None,device_id=None):
+    audio = extract_audio_parameters(file)
+
+    new_file = str(uuid.uuid4())
+    STORAGE.put(key=get_contrib_path(new_file),source=file.stream)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""insert into contrib_clips (audio_sr, audio_ch, audio_frames, audio_duration, audio_format, audio_subtype,
+                species,recorded_ts,latitude,longitude,label,detection_id,device_id,filename,contrib_ts,filesize) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [audio["sample_rate"],audio["channels"],audio["frames"],audio["duration"],audio["format"],audio["subtype"],
+                    species,utc_ts,latitude,longitude,label,detection_id,device_id,new_file,turtlepond.dates.get_epoch(),filesize])
+    contrib_id = cur.lastrowid
+    conn.commit()
+    return True, contrib_id
+
+def extract_audio_parameters(file):
+    file.seek(0)
+    info = sf.info(file)
+    file.seek(0)
+
+    return {
+        "sample_rate": info.samplerate,
+        "channels": info.channels,
+        "frames": info.frames,
+        "duration": info.duration,
+        "format": info.format,
+        "subtype": info.subtype,
+    }    
+
+def share_record(device_id=None, detection_id=None, provider=None, provider_id=None):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""insert into share_log (device_id, detection_id, provider, provider_id, share_ts) values (?,?,?,?,?)""", [device_id, detection_id, provider, provider_id, turtlepond.dates.get_epoch()])
+    conn.commit()
+    conn.close()
+
+def share_check_dupe(device_id=None, detection_id=None, provider=None):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""select provider_id from share_log where device_id = ? and detection_id = ? and provider = ?""", [device_id, detection_id, provider])
+    rows = cur.fetchall()
+    if len(rows) == 1:
+        print("Dupe check found dupe")
+        return True, rows[0][0]
+    else:
+        return False, None
 
 @app.route("/link/inaturalist", methods=["POST"])
 def inaturalist_link():
@@ -277,6 +461,7 @@ def inaturalist_callback():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("delete from external_accounts where device_id = ? and provider = ?",[dev_id,'iNaturalist'])
+
     cur.execute("""insert into external_accounts (device_id, provider,access_token,connected) values (?,?,?,?)""", [dev_id,'iNaturalist',heket_config.CRYPTO.encrypt(resp["access_token"]),turtlepond.dates.get_epoch()])
     conn.commit()
     conn.close()
@@ -325,6 +510,11 @@ CONN = get_db()
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS devices (device_id integer primary key autoincrement, device_key_hash text, status text, created text, linked text)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS challenges (challenge_id integer primary key autoincrement, device_id int, challenge text, expires int)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS external_accounts (external_account_id integer primary key autoincrement, device_id int, provider text, provider_user_id text, provider_user_name text, access_token text, connected int)""")
+CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS share_log (share_id integer primary key autoincrement, device_id int, detection_id int, provider text, provider_id text, share_ts int)""")
+CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS contrib_clips(contrib_id integer primary key autoincrement, audio_sr int, audio_ch int, audio_frames int, audio_duration real, audio_format text, audio_subtype text,
+                    species text,recorded_ts int,latitude real,longitude real,label text,detection_id int,device_id int,filename text,contrib_ts int, filesize int, turtlepond_label text)""")
+CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS clip_packs (pack_id integer primary key autoincrement, label text, audio_sr int, duration real, file text, update_ts int)""")
+#CONN.cursor().execute("""insert into clip_packs (label, audio_sr,duration,file,update_ts) values('test',16000,15,'test.tar',1)""")
 #CONN.cursor().execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_challenge_unq ON challenges(challenge)""")
 CONN.commit()
 CONN.close()

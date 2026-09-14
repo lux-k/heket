@@ -7,7 +7,8 @@ from io import BytesIO
 import librosa.display
 import matplotlib.pyplot as plt
 import re
-   
+import random
+
 def load_model_from_file(file):
     if file.endswith(".pkl"):
         return RandomForestModel(file)
@@ -72,6 +73,27 @@ class HeketModel:
     def extract_features_from_file(self, file):
         y, sr = librosa.load(file, sr=heket_config.SAMPLE_RATE)
         return self.extract_features_from_audio(y, sr)
+
+    def wav_files(self, folder):
+        if not os.path.isdir(folder):
+            return []
+
+        return [
+            os.path.join(folder, file)
+            for file in sorted(os.listdir(folder))
+            if file.endswith(".wav")
+        ]
+
+    def get_files(self, source_path, label):
+        local_files = self.wav_files(os.path.join(source_path,label))
+        contrib_files = self.wav_files(os.path.join(source_path, "..", "contrib", label))
+
+        contrib_count = max(0, len(contrib_files) - len(local_files))
+
+        if contrib_count < len(contrib_files):
+            contrib_files = random.sample(contrib_files, contrib_count)
+
+        return contrib_files + local_files
 
 class RandomForestModel(HeketModel):
     mode = "unknown"
@@ -148,13 +170,14 @@ class RandomForestModel(HeketModel):
         labels = os.listdir(source_path)
 
         for label in sorted(labels):
-            folder = os.path.join(source_path, label)
-            for file in os.listdir(folder):
-                if file.endswith(".wav"):
-                    path = os.path.join(folder, file)
-                    features = self.extract_features_from_file(path)
-                    X.append(features)
-                    y.append(label)
+            for file in self.get_files(source_path, label):
+#            folder = os.path.join(source_path, label)
+ #           for file in os.listdir(folder):
+  #              if file.endswith(".wav"):
+                #path = os.path.join(folder, file)
+                features = self.extract_features_from_file(file)
+                X.append(features)
+                y.append(label)
 
         X = np.array(X)
 
@@ -247,16 +270,12 @@ class CnnModel(HeketModel):
 
         # Load dataset
         for label in labels:
-            folder = os.path.join(source_path, label)
+            for file in self.get_files(source_path, label):
+                features = self.extract_features_from_file(file)
 
-            for file in sorted(os.listdir(folder)):
-                if file.endswith(".wav"):
-                    path = os.path.join(folder, file)
-                    features = self.extract_features_from_file(path)
-
-                    X.append(features)
-                    y.append(label)
-                    files.append(path)
+                X.append(features)
+                y.append(label)
+                files.append(file)
 
         X = np.array(X)
         X = X[..., np.newaxis]
@@ -285,8 +304,6 @@ class CnnModel(HeketModel):
 
         file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
         model.save(file)
-        
-        
         
         label_file = file.replace(".keras", ".labels")
 
@@ -411,4 +428,4 @@ class BirdNETModel(HeketModel):
 
     def train(self, source_path):
         print(f"Labels saved as {label_file}")    
-        print("Classes:", encoder.classes_)        
+        print("Classes:", encoder.classes_)

@@ -3,3 +3,4 @@ python-dotenv
 requests
 turtlepond @ git+https://github.com/lux-k/turtlepond.git@v0.1.2
 pyinaturalist
+soundfile

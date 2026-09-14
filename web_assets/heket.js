@@ -10,19 +10,52 @@ async function populateShareDialog(detectionId) {
     const res = await fetch("/api/detection/" + detectionId);
     const data = await res.json();
 
+    const container_r = document.getElementById("share_detection_recips");
+    container_r.innerHTML = "";
+
+    data.shareable.forEach(entry => {
+        container_r.innerHTML += `<input name="shareRecip" type="checkbox" value="${entry.value}">${entry.name}<br><small>&#9432; ${entry.warning}</small><br><br>`;
+     });
+
+    document.getElementById("share_detection_id").value = detectionId;
+
     const container = document.getElementById("share_detection_text");
     container.innerHTML = "";
-
-
+   
     const div = document.createElement("div");
 
     div.className = "entry";
-    div.innerHTML = `Labeled: ${data.label}<br>Captured: ${data.ts_formatted}<br><br><img src="/spectrogram/${data.detectionId}"><br><br><audio controls src=\"recordings/${data.file}\"></audio><br>`;
+    div.innerHTML = `Labeled: ${data.label}<br>Species: ${data.species ?? "?"}<br>Captured: ${data.ts_formatted}<br><br><img src="/spectrogram/${data.detectionId}"><br><br><audio controls src=\"recordings/${data.file}\"></audio><br>`;
     container.appendChild(div);
-  
 
+    if (data.shared.length > 0) {
+        data.shared.forEach(entry => {
+            if (entry.url)
+                container_r.innerHTML += `<a href="${entry.url}">${entry.name} (click to see)<br>`;
+            else
+                container_r.innerHTML += `${entry.name} (already shared)<br>`;
+        });
+    }
+
+    if (container_r.innerHTML == "") 
+        container_r.innerHTML = "No recipients available.";
+ }
+
+ async function shareDetection() {
+     const checkedBoxes = document.querySelectorAll('input[name="shareRecip"]:checked');
+    
+    // Extract the values into a clean array
+    const selectedValues = Array.from(checkedBoxes).map(cb => cb.value);
+    const detectionId = document.getElementById("share_detection_id").value;
+
+    await fetch('/api/detection/' + detectionId + '/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipients: selectedValues})
+    });
+
+    document.getElementById("share_detection_dialog").close();
 }
-
 
 function labelClip(file, label) {
     fetch('/label', {
@@ -125,6 +158,7 @@ async function updateSoundscapeHTML(data) {
 }
 
 const toast = document.getElementById("toast");
+
 var toastTimeout = setTimeout(() => {{
     if (toast) toast.style.display = "none";
     toastTimeout = null;
@@ -144,14 +178,14 @@ evt.addEventListener('notification', (event) => {
     try {
         var data = JSON.parse(event.data);
         
-        
+        toast.style.display = "block";
+
         if (toastTimeout) {
             // it's already displayed... extend and add
             clearTimeout(toastTimeout)
             toast.innerHTML += data.message + "<br>";            
         } else {
             toast.innerHTML = data.message + "<br>";
-            toast.style.display = "block";
         }
 
         toastTimeout = setTimeout(() => {{
