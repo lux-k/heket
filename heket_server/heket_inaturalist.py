@@ -86,7 +86,7 @@ def get_jwt_from_access_token(access_token):
     return response["api_token"]
 
 def species_to_taxa(species):
-    response = pyinaturalist.get_taxa(q="Lithobates catesbeianus")
+    response = pyinaturalist.get_taxa(q=species)
     if response["total_results"] > 0:
         return response["results"][0]["id"]
 
