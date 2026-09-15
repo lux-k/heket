@@ -1,9 +1,16 @@
 import tarfile
 import sys
-import heket_common
-import heket_config
 import json
 import os
+from pathlib import Path
+
+parent_dir = str(Path(__file__).resolve().parent.parent)
+
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+import heket_common
+import heket_config
 import turtlepond.storage
 import turtlepond.dates
 

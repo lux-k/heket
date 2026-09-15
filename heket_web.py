@@ -1593,10 +1593,9 @@ def turtlepond_link():
             heket_config.save_config_value("HEKET_TURTLEPOND_KEY",key)
             heket_config.TURTLEPOND_KEY = key
             res = response.json()
-            html = f"<h1>Complete Linking</h1><ul>To complete the link, enter this code: {res['challenge']} on the <a href=\"{res['challenge_url']}\" target=\"_blank\">TurtlePond</a> website (new tab) within a few minutes." 
+            html = f"<h1>Complete Linking</h1><ul>To complete the link, enter this code: <b>{res['challenge']}</b> on the <a href=\"{res['challenge_url']}\" target=\"_blank\">TurtlePond</a> website (new tab) within a few minutes." 
             html += f"<br><br>After completing that step, <a href=\"{url_for('setup')}\">recheck the setup</a>."
-            return make_page(title="Complete Linking", content=
-                             + "<br><br>After completing that, </ul>")
+            return make_page(title="Complete Linking", content=html)
         else:
             return make_page(title="Link Failed", content="<h1>Linking Failed</h1>Please try again later.")
     except Exception as e:

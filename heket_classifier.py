@@ -432,5 +432,4 @@ class BirdNETModel(HeketModel):
         return chunks
 
     def train(self, source_path):
-        print(f"Labels saved as {label_file}")    
-        print("Classes:", encoder.classes_)
+        pass

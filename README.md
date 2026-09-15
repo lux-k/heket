@@ -2,17 +2,34 @@
 
 ![Heket log](web_assets/heket_logo_small.png)
 
-Acoustic detection of frog calls from continuous audio streams. This part of the [Turtle Pond](https://turtlepond.us) suite.
+Heket is a locally adaptive acoustic observation system for frogs and toads.
+
+Heket listens continuously to an audio source, detects potential frog and toad calls, preserves the evidence, and lets you review what it heard. Corrections you make can be used to retrain the local model, allowing each Heket installation to become better adapted to its own species, microphone, and acoustic environment.
+
+A new Heket can bootstrap its first model using community-contributed clip packs from TurtlePond.us. As you review and label recordings from your own site, local examples progressively replace that borrowed knowledge.
+
+Heket runs locally. Internet-connected services such as TurtlePond.us and iNaturalist add capabilities, but aren't required for Heket's core monitoring and learning functions.
+
+**Local first. Learn locally. Share deliberately.**
+
+This part of the [Turtle Pond](https://turtlepond.us) suite.
 
 ---
 
 ## What it does
 
-- Listens to live RTSP streams (likely from security cameras)
-- Detects candidate frog calls
-- Stores and presents detections
-- Provides simple playback of events
-- Allows retraining of the model for improved accuracy
+- Listens continuously to RTSP audio sources such as security cameras
+- Detects and classifies candidate frog and toad calls
+- Preserves audio evidence for review
+- Lets you correct classifications and add your own labels
+- Retrains models using recordings from your own site
+- Bootstraps new installations using community clip packs
+- Contributes selected labeled recordings back to TurtlePond.us
+- Shares selected observations and audio with iNaturalist
+
+Heket is designed around a simple loop:
+
+**Listen → Detect → Review → Learn → Contribute or Share**
 
 ---
 
@@ -22,21 +39,17 @@ Acoustic detection of frog calls from continuous audio streams. This part of the
 
 ---
 
-## Current state
+## Before you start
 
-This is an early project.
+You will need: a machine capable of running Heket, an RTSP audio source, and—if you want to bootstrap from community clips—an Internet connection.
 
-- Designed to run locally
-- Flask-based web interface
-- Focused on simplicity over completeness
+**VM note**: If running Heket on a VM,  CPU type matters because of TensorFlow's expected instruction set. For Proxmox/QEMU, Proxmox CPU Type: host is recommended for single-host deployments.
 
-It is only (poorly) trained on a few frogs: American bullfrog, grey tree frog, Fowler's toad and green frogs. You will need to expand and enhance your model to tune it for your yard. (See below)
+Heket does **not** ship with a pretrained model. Your first model is built during setup from the clip packs you choose.
 
 ---
 
 ## Installation
-
-VM note: If running Heket on a VM,  CPU type matter because of TensorFlow's expected instruction set. For Proxmox/QEMU,  Proxmox CPU Type: host is recommended for single-host deployments.
 
 ### Using Docker Compose (easiest)
 
@@ -111,16 +124,47 @@ You should then be able to connect to the machine's IP on port 5000, e.g. http:/
 
 ---
 
+## Quickstart
+
+Navigate to the Heket website, for example http://192.168.100.10:5000. A new installation should automatically direct you to the setup page.
+
+Enter the RTSP URL for your camera or audio source, for example: rtsp://username:password@camera_hostname:554/h264Preview_01_sub
+
+Click **Save**.
+
+Heket now knows where to obtain audio, but a new installation does not include a prebuilt model. Before Heket can identify what it hears, you'll need to build its initial model.
+
+Scroll to the bottom of the screen and click the **Settings** gear.
+
+Under **Link to TurtlePond.us**, click **Reconnect** and confirm.
+
+Heket will display a highlighted linking code. Make note of this code, then click the TurtlePond.us link. TurtlePond.us will open in a new tab.
+
+Enter the linking code and click **Link**.
+
+Close the TurtlePond.us tab and return to Heket. Click **Recheck the setup**. TurtlePond.us should now appear as linked.
+
+Click **Download Clip Packs**.
+
+Select clip packs appropriate for the frogs and toads you expect Heket to encounter. **Also select appropriate non-frog/noise packs.** You can select multiple packs. When finished, click **Add clip packs**.
+
+Heket will download the selected community clips and use them to train an initial model for this installation. Notifications will show the progress of the download and training process.
+
+When training finishes successfully, Heket will automatically begin using the new model. Your Heket is now ready to listen.
+
+Clip packs can be added at any time. If Heket encounters a sound it doesn't understand well, check TurtlePond.us for a relevant community pack. Adding a pack gives Heket examples of that sound to use during future training; local examples can then progressively replace the community examples.
+
+---
+
 ## Why
 
-Most detection systems assume ideal input.
+Frog calls don't happen in laboratory conditions. They happen alongside insects, birds, wind, traffic, machinery, dogs, rain, and other frogs.
 
-Heket is built to work in noisy, real-world conditions:
-- wind
-- traffic
-- overlapping species
+A model trained somewhere else can provide a useful starting point, but it doesn't know your pond, your microphone, or your local acoustic environment.
 
-If it works here, it can work anywhere.
+Heket is designed to start with community knowledge and then learn locally. Review what it hears, correct it when it's wrong, and retrain. Over time, the model becomes increasingly based on recordings from the place where it actually listens.
+
+**The community helps make Heket yours. You decide whether something from yours helps the community.**
 
 ---
 
@@ -135,26 +179,25 @@ Event windows protect recordings from being deleted until the event itself is de
 
 ---
 
-## Tuning
+## Teaching Heket your site
 
-As mentioned, this model is trained on a very small number of frog samples. Those frogs may or may not be present in your yard and may not sound the same with your environment (yard noise, microphone, etc.) Because of this, tuning is required.
+The initial model built during Quickstart is a starting point, not a finished classifier. Community clip packs contain recordings from other environments and equipment.
 
-Run the base system for a little while.. a few hours or so. See how the output looks. In particular, if you HEAR frogs, make note of the time so you can find those clips. 
+As Heket begins listening, review its detections. Correct classifications that are wrong and label useful recordings that Heket didn't understand correctly. Non-frog examples are important too: wind, insects, birds, traffic, machinery, and other sounds can all help Heket learn what not to classify as a frog.
 
-You will start by listening to the clips in the "Iffy" column. If the clip is a frog, label it as such (select it from the dropdown, click the label button). If you need to add labels, there is a spot on the interface for adding them.
+Non-frog labels should begin with nonfrog_, for example nonfrog_wind or nonfrog_ambient.
 
-Of note, non frog labels are also important. Things like the wind, dogs, etc. could be labeled frogs. Just make sure that "nonfrogs" have a label name prefix of of "nonfrog_", e.g. "nonfrog_wind".
+When you have accumulated useful local labels, train a new model. Heket uses your local recordings along with community bootstrap clips.
 
-After you classify some clips, hit the training button. This will instruct the model to relearn the sounds based on your labels. Give it a little time to do so. You should then be able to hit the "reload" button on the custom models and see a recently created model.
-
-Click on the new model to switch to using it. This will classify new clips using your refined model.
+As local recordings accumulate for a label, they replace community recordings used for that label. The community clips are scaffolding; the goal is for your Heket to increasingly learn from your site.
 
 ---
 
-## Of note
+## Is Heket really frog-specific?
 
-There is no inherent tuning done on the audio to make this a "frog/toad only" system -- that was just the use case I had in mind when I built it. You could, conceivably, train Heket to listen to birds, insects, dogs or your mother-in-law as long as you use the system to
-label clips.
+Heket itself contains little that inherently limits the acoustic learning system to frogs and toads. That's simply the problem it was built to solve. In principle, the same machinery could be trained against birds, insects, dogs, machinery—or your mother-in-law—given appropriate labeled recordings.
+
+TurtlePond community data and the Heket user experience, however, are currently focused on frogs and toads.
 
 ---
 
