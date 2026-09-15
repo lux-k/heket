@@ -1554,7 +1554,7 @@ def download_install_packs(packs):
 
             if pack_info is None:
                 raise ValueError("Unknown pack found")
-            
+
             with requests.get(response["url"], stream=True) as r:
                 r.raise_for_status()
 
@@ -1566,7 +1566,7 @@ def download_install_packs(packs):
 
                 with tarfile.open(fileobj=r.raw, mode="r|*") as tar:
                     for member in tar:
-                        if bool(re.match(r"^[0-9a-fA-F_]+\.wav$", member.name)):
+                        if bool(re.match(r"^[0-9a-fA-F_\-]+\.wav$", member.name)):
                             tar.extract(member, path=destination)
             simple_notify(pack_info["label"] + " clip pack installed")              
 
@@ -1593,7 +1593,10 @@ def turtlepond_link():
             heket_config.save_config_value("HEKET_TURTLEPOND_KEY",key)
             heket_config.TURTLEPOND_KEY = key
             res = response.json()
-            return make_page(title="Complete Linking", content=f"<h1>Complete Linking</h1><ul>To complete the link, enter this code: {res['challenge']} on the <a href=\"{res['challenge_url']}\">TurtlePond</a> website within a few minutes.</ul>")
+            html = f"<h1>Complete Linking</h1><ul>To complete the link, enter this code: {res['challenge']} on the <a href=\"{res['challenge_url']}\" target=\"_blank\">TurtlePond</a> website (new tab) within a few minutes." 
+            html += f"<br><br>After completing that step, <a href=\"{url_for('setup')}\">recheck the setup</a>."
+            return make_page(title="Complete Linking", content=
+                             + "<br><br>After completing that, </ul>")
         else:
             return make_page(title="Link Failed", content="<h1>Linking Failed</h1>Please try again later.")
     except Exception as e:

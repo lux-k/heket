@@ -185,7 +185,7 @@ def link_challenge_confirm(challenge):
         #link session here
         conn.commit()
         conn.close()
-        return make_page(title="Device Linked",content="You have linked your device")
+        return make_page(title="Device Linked",content="You have linked your device. You may close this window.")
     else:
         flash("Code invalid")
         conn.close()

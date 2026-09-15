@@ -16,6 +16,8 @@ def load_model_from_file(file):
         return CnnModel(file)
     elif file.startswith("BirdNET"):
         return BirdNETModel(file)
+    elif file == "":
+        return EmptyModel()
     else:
         raise NotImplementedError()
 
@@ -94,6 +96,9 @@ class HeketModel:
             contrib_files = random.sample(contrib_files, contrib_count)
 
         return contrib_files + local_files
+
+class EmptyModel(HeketModel):
+    pass
 
 class RandomForestModel(HeketModel):
     mode = "unknown"

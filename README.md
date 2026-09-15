@@ -36,6 +36,8 @@ It is only (poorly) trained on a few frogs: American bullfrog, grey tree frog, F
 
 ## Installation
 
+VM note: If running Heket on a VM,  CPU type matter because of TensorFlow's expected instruction set. For Proxmox/QEMU,  Proxmox CPU Type: host is recommended for single-host deployments.
+
 ### Using Docker Compose (easiest)
 
 Go to where you keep your Docker files, e.g. /opt
