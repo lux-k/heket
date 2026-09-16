@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#v.01
 
 set -euo pipefail
 
