@@ -1,0 +1,15 @@
+[Unit]
+Description=Heket Frog Detector
+After=network.target auditd.service
+
+[Service]
+User=heket
+Group=heket
+WorkingDirectory=/opt/heket
+ExecStart=/opt/heket_env/bin/python3 heket_pipeline.py
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+
+[Install]
+WantedBy=multi-user.target
