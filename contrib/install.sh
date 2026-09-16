@@ -13,7 +13,10 @@ set -euo pipefail
 
 REPO="https://github.com/lux-k/heket.git"
 GITHUB_REPO="lux-k/heket"
-INSTALL_DIR="/opt/heket"
+INSTALL_BASE="/opt"
+INSTALL_DIR="${INSTALL_BASE}/heket"
+DATA_DIR="${INSTALL_BASE}/heket-data"
+VENV_DIR="${INSTALL_BASE}/heket-env"
 HEKET_USER="heket"
 
 REQUESTED_VERSION="${1:-latest}"
@@ -69,9 +72,10 @@ if [[ "$REQUESTED_VERSION" == "latest" ]]; then
     info "Finding latest Heket release..."
 
     VERSION="$(
-        curl -fsSL \
-            "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" |
-        python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])'
+        git ls-remote --tags --refs "$REPO" |
+        awk -F/ '{print $3}' |
+        sort -V |
+        tail -n 1
     )"
 
     [[ -n "$VERSION" ]] || die "Could not determine latest Heket release."
@@ -100,8 +104,6 @@ echo "Architecture:  ${ARCH}"
 echo "Version:       ${VERSION}"
 echo "Install path:  ${INSTALL_DIR}"
 echo
-
-exit 0
 
 #
 # Don't accidentally trash an existing installation
@@ -133,15 +135,16 @@ fi
 
 info "Installing Heket ${VERSION}..."
 
+
 git clone \
     --branch "$VERSION" \
     --depth 1 \
     "$REPO" \
     "$INSTALL_DIR"
 
-mkdir "/opt/{$INSTALL_DIR}/heket-data
-chown -R "${HEKET_USER}:${HEKET_USER}" "${INSTALL_DIR}/heket-data"
-ln -s "${INSTALL_DIR}/heket-data" "${INSTALL_DIR}/heket/data"
+mkdir "${DATA_DIR}"
+chown -R "${HEKET_USER}:${HEKET_USER}" "${DATA_DIR}"
+ln -s "${DATA_DIR}" "${INSTALL_DIR}/data"
 
 #
 # Python environment
@@ -149,12 +152,12 @@ ln -s "${INSTALL_DIR}/heket-data" "${INSTALL_DIR}/heket/data"
 
 info "Creating Python environment..."
 
-python3 -m venv "${INSTALL_DIR}/heket-env"
+python3 -m venv "${VENV_DIR}/heket-env"
 
-"${INSTALL_DIR}/heket-env/bin/python" -m pip install --upgrade pip
-"${INSTALL_DIR}/heket-env/bin/python" -m pip install -r "${INSTALL_DIR}/requirements.txt"
+"${VENV_DIR}/bin/python" -m pip install --upgrade pip
+"${VENV_DIR}/heket-env/bin/python" -m pip install -r "${INSTALL_DIR}/requirements.txt"
 
-cp /opt/heket/contrib/heket.service /etc/systemd/system/heket.service
+cp "${INSTALL_DIR}/contrib/heket.service /etc/systemd/system/heket.service
 
 systemctl daemon-reload
 systemctl enable --now heket
