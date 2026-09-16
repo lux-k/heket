@@ -4,7 +4,8 @@ numpy
 librosa
 soundfile
 matplotlib
-tensorflow-cpu
+tensorflow-cpu ; platform_machine == "x86_64"
+tensorflow ; platform_machine == "aarch64"
 requests
 gunicorn
 gevent
