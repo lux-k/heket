@@ -43,9 +43,41 @@ Heket is designed around a simple loop:
 
 You will need: a machine capable of running Heket, an RTSP audio source, and—if you want to bootstrap from community clips—an Internet connection.
 
-**VM note**: If running Heket on a VM,  CPU type matters because of TensorFlow's expected instruction set. For Proxmox/QEMU, Proxmox CPU Type: host is recommended for single-host deployments.
-
 Heket does **not** ship with a pretrained model. Your first model is built during setup from the clip packs you choose.
+
+### Raspberry Pi
+
+Heket has been tested on a Raspberry Pi 5 (2GB). We have the following recommendations:
+- have active cooling for model training (14 minutes fan-less vs X minutes with fan for 9 clip packs)
+- purchase the M.2 Hat+ and 2230 NVME storage for more reliable storage
+- use the install script (see below)
+
+The sample cost ($USD) and BOM for a Raspberry Pi 5 setup is below.
+
+#### Minimum configuration
+| Component | Description | Cost | 
+| -------- | -------- | -------- |
+| Raspberry Pi 5 (2GB) | Main compute | $65 |
+| Raspberry Pi 27 Watt power supply | Powers the Pi via USB-C | $13 |
+| Raspberry Pi case | Encloses and protects the Pi | $10 |
+| 32GB micro SDHC card | Storage for recordings; less suitable for sustained writes | $25 |
+| Total | | $113 |
+
+#### Recommended configuration
+| Component | Description | Cost | 
+| -------- | -------- | -------- |
+| Raspberry Pi 5 (2GB) | Main compute | $65 |
+| Raspberry Pi 27 Watt power supply | Powers the Pi via USB-C | $13 |
+| Raspberry Pi M.2 Hat+ | Allows the Pi to use NVME storage | $15 | 
+| 64 GB or larger M.2 2230 NVMe SSD | Storage of recordings -- look for remaindered but new components | $25 | 
+| Raspberry Pi case | Make sure it fits the Pi board + hat | $10 |
+| RTC Battery for Raspberry Pi 5 | Allows the Pi to have accurate time without the network | $5 | 
+| Raspberry Pi 5 fan | Reduces processor throttling during training | $10 |
+| Total| | $143 |
+
+### VM note
+
+If running Heket on a VM (either via Docker or directly on the VM),  the CPU type matters. TensorFlow has strong opinions about what the CPU should look like. For Proxmox/QEMU, setting the CPU Type to host is recommended for single-host deployments. Other hypervisors might need similar configuration.
 
 ---
 
@@ -87,6 +119,8 @@ Go to where to want the code to live.
 
 Grab the source code, e.g. ```git pull https://github.com/lux-k/heket.git```
 
+Create a data folder, e.g. ```mkdir heket-data```
+
 Add this stanza to your docker-compose.yml:
 
 ```
@@ -107,6 +141,17 @@ Build and run the container, e.g. ```docker compose up heket --build ```
 
 You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
 
+## With our install script (tested on a Pi)
+
+Enter these two commands on the Pi's terminal.
+
+```
+curl -fsSL https://raw.githubusercontent.com/lux-k/heket/refs/heads/main/contrib/install.sh -o /tmp/heket-install.sh
+sudo bash /tmp/heket-install.sh
+```
+
+You should verify the contents of the script before running it.
+
 ## venv / non-Docker setup
 
 ```bash
@@ -115,6 +160,8 @@ cd /opt
 python -m venv heket-env
 source heket-env/bin/activate
 git clone https://github.com/lux-k/heket
+mkdir heket-data
+ln -s heket-data heket/data
 cd heket
 pip install -r requirements.txt
 python heket_pipeline.py

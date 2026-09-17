@@ -152,12 +152,12 @@ ln -s "${DATA_DIR}" "${INSTALL_DIR}/data"
 
 info "Creating Python environment..."
 
-python3 -m venv "${VENV_DIR}/heket-env"
+python3 -m venv "${VENV_DIR}"
 
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/heket-env/bin/python" -m pip install -r "${INSTALL_DIR}/requirements.txt"
+"${VENV_DIR}/bin/python" -m pip install -r "${INSTALL_DIR}/requirements.txt"
 
-cp "${INSTALL_DIR}/contrib/heket.service /etc/systemd/system/heket.service
+cp "${INSTALL_DIR}/contrib/heket.service" /etc/systemd/system/heket.service
 
 systemctl daemon-reload
 systemctl enable --now heket
@@ -172,3 +172,12 @@ echo "  ${INSTALL_DIR}"
 echo
 echo "🐸 Ready for frogs."
 echo
+
+echo
+echo "Visit Heket to get started:"
+echo "  http://$(hostname):5000/"
+echo "  http://$(hostname).local:5000/"
+echo
+
+echo "To see logs:"
+echo "  journalctl -u heket -n 100 -f"

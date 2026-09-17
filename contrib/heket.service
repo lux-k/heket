@@ -6,8 +6,8 @@ After=network.target auditd.service
 User=heket
 Group=heket
 WorkingDirectory=/opt/heket
+Environment="PATH=/opt/heket-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/heket_env/bin/python3 heket_pipeline.py
-KillMode=process
 Restart=on-failure
 RestartPreventExitStatus=255
 
