@@ -48,7 +48,7 @@ Heket does **not** ship with a pretrained model. Your first model is built durin
 ### Raspberry Pi
 
 Heket has been tested on a Raspberry Pi 5 (2GB). We have the following recommendations:
-- have active cooling for model training (14 minutes fan-less vs X minutes with fan for 9 clip packs)
+- have active cooling for model training (15 minutes fan-less vs 13 minutes with fan for 9 clip packs)
 - purchase the M.2 Hat+ and 2230 NVME storage for more reliable storage
 - use the install script (see below)
 
