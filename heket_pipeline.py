@@ -22,6 +22,8 @@ import heket_config
 import heket_common
 import heket_classifier
 
+heket_common.migrate_versions()
+
 import turtlepond.dates
 
 with open(os.path.join(heket_config.DATA_DIR, "heket.pid"), "w") as f:

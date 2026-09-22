@@ -105,12 +105,13 @@ def db_setup():
     """)
 
     CONN.cursor().execute("""
-    CREATE TABLE IF NOT EXISTS species (
-        species_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE TABLE IF NOT EXISTS class_metadata (
+        class_id INTEGER PRIMARY KEY AUTOINCREMENT,
         label_name TEXT,
         latin_name TEXT,
         common_name TEXT,
-        notes text
+        notes text,
+        target integer not null default 0
     )
     """)
 
@@ -160,7 +161,6 @@ def version_number(version):
     major, minor = str(version).split(".")
     return int(major) * 100 + int(minor)
 
-
 def migrate_versions():
     print("Heket migration level was at version", heket_config.LAST_MIGRATED_VERSION)
     print("Heket software is at version", heket_config.VERSION)
@@ -178,10 +178,12 @@ def migrate_versions():
 
             if Path(file).exists():
                 print("Execute", file)
+                #this will stop the processing if errors are encountered
                 subprocess.run([sys.executable,file], check=True)
+                #increment the version after each script has executed
                 heket_config.save_config_value("HEKET_LAST_VERSION",stop)
-            #subprocess.Popen(["python","migration/{file}.py"])
+
+        #and if we finish all, update to the current version
+        heket_config.save_config_value("HEKET_LAST_VERSION",heket_config.VERSION)
     else:
         print("No migration necessary.")
-
-migrate_versions()

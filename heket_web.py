@@ -4,6 +4,9 @@ import time
 import sqlite3
 import heket_config
 import heket_common
+
+heket_common.migrate_versions()
+
 import os
 import shutil
 from pathlib import Path
@@ -343,11 +346,13 @@ def label_to_name( label ):
         conn = get_db()
         cur = conn.cursor()
     
-        cur.execute("SELECT common_name from species where label_name = ?", [label])
+        cur.execute("SELECT common_name from class_metadata where label_name = ?", [label])
         rows = cur.fetchall()
         if len(rows) > 0:
-            NAME_CACHE[label] = rows[0][0]
-            ret_val = rows[0][0]
+            if len(rows[0][0]) > 0:
+                ret_val = NAME_CACHE[label] = rows[0][0]
+            else:
+                ret_val = NAME_CACHE[label] = label
 
     if ret_val is None:
         return label
@@ -408,9 +413,9 @@ def index():
             when labeled is null THEN species
             when labeled is not null then labeled
         END as animal    
-    FROM detections
-    WHERE confidence > ? and animal not like ?
-    """,[heket_config.CONF_STRONG, "nonfrog_%"])
+    FROM detections left join class_metadata cmd on cmd.label_name = animal
+    WHERE confidence > ? and target = 1
+    """,[heket_config.CONF_STRONG])
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
 
@@ -424,12 +429,16 @@ def index():
 #        end as validated
     cur.execute(f"""
     SELECT detections.id, detections.recorded_ts,
-        species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
-    FROM detections left join weather on detections.weather_id = weather.weather_id
-    WHERE confidence > ? and ((labeled is null and species not like ?) or (labeled is not null and labeled not like ?))
+        species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm,
+        CASE 
+            when labeled is null THEN species
+            when labeled is not null then labeled
+        END as animal  
+    FROM detections left join weather on detections.weather_id = weather.weather_id left join class_metadata cmd on cmd.label_name = animal
+    WHERE confidence > ? and target = ?
     ORDER BY detections.recorded_ts DESC
     LIMIT ? offset ?
-    """,[heket_config.CONF_STRONG, "nonfrog_%", "nonfrog_%", limit, (frog_page - 1) * limit])
+    """,[heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limit])
 
     rows = cur.fetchall()
     html += "<div class=\"maingrid\">"
@@ -493,7 +502,7 @@ def index():
     html += "</div>"
 
     html += "<div class=\"maincard\">"
-    html += "<h1>Detections by Species</h1><ul>"
+    html += "<h1>Target Detections</h1><ul>"
     
     cur.execute(f"""
     SELECT 
@@ -502,22 +511,22 @@ def index():
             when labeled is not null then labeled
         END as animal,
     count(*)
-    FROM detections
-    WHERE animal not like ?
+    FROM detections left join class_metadata cmd on cmd.label_name = animal
+    WHERE cmd.target = 1
     GROUP BY animal
     ORDER BY count(*) DESC
-    """,["nonfrog_%"])
+    """)
 
     rows = cur.fetchall()
 
     if len(rows) == 0:
-        html += f"<li><i>none</i></li>"
+        html += f"<i>none</i>>"
     else:
         for r in rows:
-            html += f"<li><a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}</li>"    
+            html += f"<a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}<br>"    
 
     html += "</ul>"
-    html += "<h1>Non-Frog Detections</h1><ul>"
+    html += "<h1>Non-Target Detections</h1><ul>"
     
     cur.execute(f"""
     SELECT 
@@ -526,16 +535,16 @@ def index():
             when labeled is not null then labeled
         END as animal,
     count(*)
-    FROM detections
-    WHERE animal like ?
+    FROM detections left join class_metadata cmd on cmd.label_name = animal
+    WHERE cmd.target is null or cmd.target = 0
     GROUP BY animal
     ORDER BY count(*) DESC
-    """,["nonfrog_%"])
+    """)
 
     rows = cur.fetchall()
 
     if len(rows) == 0:
-        html += f"<li><i>none</i></li>"
+        html += f"<i>none</i>"
     else:
         html += "<div style=\"width: fit-content; overflow-y: auto; height: 200px; padding-right: 10px;\">"
 
@@ -1025,7 +1034,7 @@ def detection_get(detectionId):
         shared.append({"provider": r[0], "name": share_cfg[r[0]]["name"], "id": r[1], "url": share_cfg[r[0]]["url"](r[1])})
 
     if CAPS is not None:
-        cur.execute(f"""SELECT latin_name from species where label_name = ?""", [label])
+        cur.execute(f"""SELECT latin_name from class_metadata where label_name = ?""", [label])
         rows2 = cur.fetchall()
 
         if len(rows2) == 1:
@@ -1144,21 +1153,30 @@ def class_save():
     common_name = request.form["common_name"]
     req = request.form["route"]
     notes = request.form["notes"]
-    species_id = None if "species_id" not in request.form  or len(request.form["species_id"]) == 0 else int(request.form["species_id"])
+
+    if "target" in request.form:
+        target = 1
+    else:
+        target = 0
+
+    class_id = None if "class_id" not in request.form  or len(request.form["class_id"]) == 0 else int(request.form["class_id"])
 
     conn = get_db()
     cur = conn.cursor()
     
-    sql_parms = [class_name, latin_name, common_name, notes]
-    if species_id is None:
-        cur.execute("""INSERT INTO species (label_name, latin_name, common_name, notes) VALUES (?,?,?,?)""",sql_parms)
+    sql_parms = [class_name, latin_name, common_name, notes, target]
+    if class_id is None:
+        cur.execute("""INSERT INTO class_metadata (label_name, latin_name, common_name, notes, target) VALUES (?,?,?,?,?)""",sql_parms)
     else:
-        sql_parms.append(species_id)
-        cur.execute("""update species set label_name=?, latin_name=?, common_name=?, notes=? where species_id = ?""",sql_parms)
+        sql_parms.append(class_id)
+        cur.execute("""update class_metadata set label_name=?, latin_name=?, common_name=?, notes=?, target=? where class_id = ?""",sql_parms)
 
     conn.commit()
     conn.close()
-    flash("Class specification save")
+    flash("Class specification saved")
+    
+    global NAME_CACHE
+    NAME_CACHE = {}
 
     return redirect(req)
 
@@ -1202,20 +1220,22 @@ def class_review():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("select species_id, label_name, latin_name, common_name, notes from species where label_name = ?", [review_class])
+    cur.execute("select class_id, label_name, latin_name, common_name, notes, target from class_metadata where label_name = ?", [review_class])
     rows = cur.fetchall()
     
-    vals = {"id": "", "label_name": "", "latin_name": "", "common_name": "", "notes": ""}
+    vals = {"id": "", "label_name": "", "latin_name": "", "common_name": "", "notes": "", "target": 0}
     if len(rows) >= 1:
         vals["id"] = rows[0][0]
         vals["label_name"] = rows[0][1]
         vals["latin_name"] = rows[0][2]
         vals["common_name"] = rows[0][3]
         vals["notes"] = rows[0][4]
+        vals["target"] = rows[0][5]
 
     html += "<fieldset class=\"collapsible collapsed\" style=\"width: 600px\"><legend>Class Specifics</legend><div class=\"fieldset-content\"><form method=\"POST\" action=\"class_save\">"
-    html += f"<input type=\"hidden\" name=\"species_id\" value=\"{vals['id']}\">"
+    html += f"<input type=\"hidden\" name=\"class_id\" value=\"{vals['id']}\">"
     html += f"<input type=\"hidden\" name=\"route\" value=\"{request.full_path}\">"
+    html += f"Target class: <input type=\"checkbox\" name=\"target\" {'checked' if vals['target'] == 1 else ''} value=\"target\"><br><br>"
     html += f"Label Name:<br><input readonly name=\"label_name\" value=\"{review_class}\"><br><br>"
     html += f"Latin Name:<br><input name=\"latin_name\" value=\"{ vals['latin_name'] if vals['latin_name'] else ''}\"><br><br>"
     html += f"Common Name:<br><input name=\"common_name\" value=\"{ vals['common_name'] if vals['common_name'] else ''}\"><br><br>"
@@ -1494,7 +1514,7 @@ def setup():
 
 @app.route("/update", methods=["POST","GET"])
 def update():
-    response = requests.get("https://api.github.com/repos/lux-k/heket/tags?per_page=100")
+    response = requests.get("https://api.github.com/repos/lux-k/heket/tags?per_page=10")
     res = response.json()
 
     match = re.search(r'v(\d+\.\d+)', res[0]["name"])    
