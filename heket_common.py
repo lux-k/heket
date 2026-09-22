@@ -4,6 +4,9 @@ import heket_config
 import sqlite3
 import random
 import requests
+import subprocess
+from pathlib import Path
+import sys
 
 def delete_file(path):
     try:
@@ -60,6 +63,20 @@ def db_setup():
     )
     """)
 
+    if False:
+        CONN.cursor().execute("""
+        CREATE TABLE IF NOT EXISTS detection_slices (
+            slice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            detection_id integer,
+            prediction TEXT,
+            confidence REAL,
+            labeled TEXT,
+            curated integer,
+            offset real,
+            duration real
+            )
+        """)
+
     CONN.cursor().execute("""
     CREATE TABLE IF NOT EXISTS weather (
         weather_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,8 +94,8 @@ def db_setup():
         species TEXT,
         start_detection_id integer,
         end_detection_id integer,
-        start_ts text,
-        end_ts text,
+        start_ts int,
+        end_ts int,
         conf_min real,
         conf_max real,
         conf_avg real,
@@ -138,3 +155,33 @@ def test_key():
             return False
     except Exception as e:
         return False
+
+def version_number(version):
+    major, minor = str(version).split(".")
+    return int(major) * 100 + int(minor)
+
+
+def migrate_versions():
+    print("Heket migration level was at version", heket_config.LAST_MIGRATED_VERSION)
+    print("Heket software is at version", heket_config.VERSION)
+
+    if heket_config.VERSION != heket_config.LAST_MIGRATED_VERSION:
+        print("Searching for migration scripts...")
+        start_version = version_number(heket_config.LAST_MIGRATED_VERSION)
+        end_version = version_number(heket_config.VERSION)
+
+        for i in range(start_version, end_version):
+            start = f"{i / 100:.2f}"
+            stop = f"{(i + 1) / 100:.2f}"
+
+            file = f"migration/{start}_to_{stop}.py"
+
+            if Path(file).exists():
+                print("Execute", file)
+                subprocess.run([sys.executable,file], check=True)
+                heket_config.save_config_value("HEKET_LAST_VERSION",stop)
+            #subprocess.Popen(["python","migration/{file}.py"])
+    else:
+        print("No migration necessary.")
+
+migrate_versions()

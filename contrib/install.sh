@@ -158,9 +158,13 @@ python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/python" -m pip install -r "${INSTALL_DIR}/requirements.txt"
 
 cp "${INSTALL_DIR}/contrib/heket.service" /etc/systemd/system/heket.service
+cp "${INSTALL_DIR}/contrib/heket-update.service" /etc/systemd/system/heket-update.service
+
+echo "heket ALL=(root) NOPASSWD: /usr/bin/systemctl start heket-update.service" >> /etc/sudoers.d/heket-update
 
 systemctl daemon-reload
 systemctl enable --now heket
+
 
 echo
 echo "----------------------------------------"

@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Heket
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/heket
+ExecStart=/opt/heket/contrib/update.sh

@@ -184,7 +184,7 @@ def make_page(title = "Home", content = ""):
     html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a><div id=\"last-heard\"></div></div><br>"
     html += content
     html += "<br><center><div style=\"width: 100%; margin-bottom: 20px;\">"
-    html += f"Heket v{heket_config.VERSION:.2f} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"https://github.com/lux-k/heket\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
+    html += f"Heket v{heket_config.VERSION:.2f} by <a href=\"mailto:kevin@turtlepond.us\">Kevin Lux</a>; Settings <a href=\"setup\">&#x2699;</a>; Github <a href=\"{heket_config.GITHUB_REPO}\"><img height=\"15\" width=\"15\" src=\"web_assets/github.svg\"></a>; <a href=\"https://turtlepond.us\">TurtlePond.us</a><br>"
     html += "</div></center>"
     html += """
 <script>
@@ -1073,6 +1073,7 @@ def model_switch_web():
     if len(model) == 0:
         return redirect(url_for("index"))
 
+    model_switch(model)
     flash("Model switched")    
     return redirect(url_for("index"))
 
@@ -1416,10 +1417,10 @@ def setup():
     global CAPS
     global EXTERNS
 
-    long_size = 75
+    long_size = 60
     html = ""
     html += "<h1>Setup Heket</h1>"
-    html += "<ul>"
+    html += "<ul><h2>Configuration Values</h2>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
     html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"{long_size}\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
@@ -1454,7 +1455,12 @@ def setup():
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form><br>"
-    
+
+    html += "<h2>Update</h2>"
+    html += "<form action=\"update\" method=\"POST\">"
+    html += "<button type=\"submit\">Check for updates</button>"
+    html += "</form><br>"
+
     if EXTERNS:
         html += "<h2>Link to TurtlePond.us</h2>Linking lets Heket download starter audio clips and contribute recordings to the shared corpus."
         html += " It also enables integrations with services such as iNaturalist.<br>No complicated registration required.<br><br>"
@@ -1485,6 +1491,46 @@ def setup():
     html += "</ul>"
 
     return make_page(title = "Setup", content = html)
+
+@app.route("/update", methods=["POST","GET"])
+def update():
+    result = subprocess.run(["git", "ls-remote", "--tags", "--refs", heket_config.GITHUB_REPO], capture_output=True, text=True, check=True)
+    result = result.stdout.splitlines()[-1]
+    match = re.search(r'v(\d+\.\d+)', result)    
+
+    html = "<h1>Update Heket</h1><ul>"
+    html += f"This Heket is currently at v{heket_config.VERSION:.2f}.<br>"
+
+    new_version = 0
+    if match:
+        new_version = float(match.group(1))
+
+    html += f"Advertised Heket is at v{new_version:.2f}.<br><br>"
+
+    if new_version > heket_config.VERSION:
+        result = subprocess.run(["systemctl", "list-unit-files", "heket-update.service", "--no-legend"], capture_output=True, text=True)
+        match = re.search(r'1 unit files', result.stdout)
+        if match:
+            html += "<form method=\"POST\" action=\"update_do\"><button type=\"submit\">Update</button></form>"
+        else:
+            html += "This Heket is either custom installed or running in a container. Manual update is required."
+    else:
+        html += "No update is necessary."
+    html += "</ul>"
+
+    return make_page(title = "Update", content=html)
+
+@app.route("/update_do", methods=["POST","GET"])
+def update_do():
+    html = "<h1>Update Heket</h1><ul>"
+    html += f"Heket has been instructed to update. Recheck the web interface in a few seconds.<br><br></ul>"
+
+    try:
+        result = subprocess.run(["sudo", "/usr/bin/systemctl", "start", "heket-update.service"], capture_output=True, text=True)
+    except Exception as e:
+        pass
+
+    return make_page(title = "Update", content=html)
 
 @app.route("/turtlepond_clips", methods=["POST","GET"])
 def turtlepond_clips():

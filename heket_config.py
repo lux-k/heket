@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv, set_key
 
-VERSION = 0.23
+VERSION = 0.24
 
 load_dotenv()
 
@@ -17,6 +17,8 @@ else:
 # you can override the defaults with this env variable
 DATA_DIR = os.getenv("HEKET_DATA_DIR", DATA_DIR)
 CONFIG_FILE = os.path.join(DATA_DIR, "heket.config")
+
+LAST_MIGRATED_VERSION = None
 
 # these runtime values are reloadable
 MODEL_FILE = None
@@ -58,6 +60,8 @@ TURTLEPOND = None
 CURRENT_STATE = "/dev/shm/heket-current.json"
 CRYPTO = None
 
+GITHUB_REPO = "https://github.com/lux-k/heket"
+
 def reload():
     global CONFIG_FILE
     global MODEL_FILE
@@ -80,9 +84,11 @@ def reload():
     
     global TURTLEPOND_KEY
     global TURTLEPOND
+    global LAST_MIGRATED_VERSION
 
     load_dotenv(CONFIG_FILE, override=True)
 
+    LAST_MIGRATED_VERSION = float(os.getenv("HEKET_LAST_VERSION", 0.00))
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", "")
     RTSP_URL = os.getenv("HEKET_RTSP_URL", "")
     MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "cnn_sg")
