@@ -184,6 +184,6 @@ def migrate_versions():
                 heket_config.save_config_value("HEKET_LAST_VERSION",stop)
 
         #and if we finish all, update to the current version
-        heket_config.save_config_value("HEKET_LAST_VERSION",heket_config.VERSION)
+        heket_config.save_config_value("HEKET_LAST_VERSION",str(heket_config.VERSION))
     else:
         print("No migration necessary.")
