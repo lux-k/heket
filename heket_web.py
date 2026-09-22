@@ -520,7 +520,7 @@ def index():
     rows = cur.fetchall()
 
     if len(rows) == 0:
-        html += f"<i>none</i>>"
+        html += f"<i>none</i>"
     else:
         for r in rows:
             html += f"<a href=\"class_review?class={r[0]}\">{label_to_name(r[0])}</a> — {r[1]}<br>"    
