@@ -42,6 +42,7 @@ COPY --from=builder /install /usr/local
 COPY *.py /app/
 COPY docker/run.sh /app/
 COPY web_assets/ /app/web_assets/
+COPY migration/ /app/migration/
 
 RUN chmod +x /app/run.sh
 
