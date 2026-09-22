@@ -1494,9 +1494,10 @@ def setup():
 
 @app.route("/update", methods=["POST","GET"])
 def update():
-    result = subprocess.run(["git", "ls-remote", "--tags", "--refs", heket_config.GITHUB_REPO], capture_output=True, text=True, check=True)
-    result = result.stdout.splitlines()[-1]
-    match = re.search(r'v(\d+\.\d+)', result)    
+    response = requests.get("https://api.github.com/repos/lux-k/heket/tags?per_page=100")
+    res = response.json()
+
+    match = re.search(r'v(\d+\.\d+)', res[0]["name"])    
 
     html = "<h1>Update Heket</h1><ul>"
     html += f"This Heket is currently at v{heket_config.VERSION:.2f}.<br>"
