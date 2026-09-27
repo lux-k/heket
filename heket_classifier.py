@@ -255,13 +255,13 @@ class CnnModel(HeketModel):
                 print(f"Loading labels from {self.label_file}")
                 with open(self.label_file) as f:
                     self.labels = [line.strip() for line in f]
-                    self.slice_time = slice_time
-                    self.sample_rate = sample_rate
             print(self.labels)
         else:
             self.mode = mode
             self.sample_rate=sample_rate
             self.slice_time=slice_time
+
+        print(self.slice_time)
 
     def process_metadata(self):
         super().process_metadata()

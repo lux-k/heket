@@ -137,9 +137,6 @@ def process_file(path):
         #this is the complete audio segment
         y, sr = load_audio(path)
 
-        print(model.slice_time)
-        print(sr)
-
         slice_samples = round(model.slice_time * sr)
         segment_samples = round(heket_config.SEGMENT_TIME * sr)
 
