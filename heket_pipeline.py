@@ -402,14 +402,17 @@ def do_maintenance():
             d.id BETWEEN r.detection_id - {buff}  AND r.detection_id + {buff})""", [detection_id, heket_config.CONF_STRONG])
         rows = cur.fetchall()
         print("Deleting", len(rows), "old files")
-        for r in rows:
-            #delete all the files
-            heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
-            cur.execute("delete from detection_slices where detection_id = ?", [r[0]])
-            cur.execute("delete from detections where id = ?", [r[0]])
+        if len(rows) > 500:
+            print("Cowardly refusing to delete a large number of detections")
+        else:
+            for r in rows:
+                #delete all the files
+                heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
+                cur.execute("delete from detection_slices where detection_id = ?", [r[0]])
+                cur.execute("delete from detections where id = ?", [r[0]])
 
-        cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
-        conn.commit()
+            cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
+            conn.commit()
 
         for label in list(bouts):
             bout_close(label=label)

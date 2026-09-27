@@ -38,7 +38,6 @@ if True:
         )
     """)
 
-    curr.execute("""delete from detection_slices""")
     curr.execute("""select id, species, confidence, labeled, bout_id, curated from detections""")
 
     rows = curr.fetchall()
