@@ -170,6 +170,7 @@ def process_file(path):
             cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, duration, sample_rate, model_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                          [turtlepond.dates.datetime_to_epoch(ts_from_filename(path)), turtlepond.dates.get_epoch(), prediction, confidence, os.path.basename(path), weather_id, round(librosa.get_duration(y=y, sr=sr),2), sr, MODEL_ID])
 
+            print("Did insert 1")
             detection_id = cur.lastrowid
             bout_id = bout_get(label=prediction,detection_id=detection_id)
 
@@ -178,6 +179,7 @@ def process_file(path):
                             [detection_id, res["offset"], res["duration"], res["prediction"], res["confidence"], bout_id])                
                 bout_notate(label=res["prediction"],confidence=res["confidence"],detection_id=detection_id)
 
+            print("Did insert 2")
             conn.commit()
 
             notify_web(topic="soundscape", data={"label": prediction, "confidence": confidence, "detection_id": detection_id})
@@ -191,6 +193,7 @@ def process_file(path):
 
     except Exception as e:
         print(f"Error processing {path}: {e}")
+        
         heket_common.delete_file(path)
 
 def cache_targets():
