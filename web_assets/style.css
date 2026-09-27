@@ -173,11 +173,10 @@ hr {
 #spectrogram-preview {
     position: absolute;
     display: none;
-    pointer-events: none;
     border: 1px solid #444;
-    background: black;
-    padding: 4px;
+    background: #eeeeee;
     z-index: 1000;
+    color: #000000;
 }
 
 #spectrogram-preview img {
@@ -192,6 +191,53 @@ hr {
     height: 100%;
     background: white;
     pointer-events: none;
+}
+
+#spectrogram-labels {
+    position: relative;
+    width: 100%;
+    height: 32px;
+    border: 1px solid #888;
+}
+
+#spectrogram-label-update {
+    display: none;
+    padding: 4px;
+}
+
+.spectrogram-slice {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    box-sizing: border-box;
+    border: 1px solid #555;
+    overflow: hidden;
+    white-space: pre;
+    text-overflow: ellipsis;    
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 2px;
+    font-size: smaller;
+    text-align: center;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.spectrogram-slice.active {
+    outline: 2px solid green;
+    outline-offset: -2px;
+}
+
+.spectrogram-slice:nth-child(odd) {
+    background-color: #ccc;
+}
+
+.spectrogram-slice:nth-child(even) {
+    background-color: #ddd;
+}
+
+#spectrogram-area {
+    position: relative;
 }
 
 abbr {

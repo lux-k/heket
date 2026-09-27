@@ -59,23 +59,28 @@ def db_setup():
         labeled TEXT,
         curated integer,
         weather_id integer,
-        bout_id integer
+        bout_id integer,
+        duration real,
+        sample_rate integer,
+        model_id integer
     )
     """)
 
-    if False:
-        CONN.cursor().execute("""
-        CREATE TABLE IF NOT EXISTS detection_slices (
-            slice_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id integer,
-            prediction TEXT,
-            confidence REAL,
-            labeled TEXT,
-            curated integer,
-            offset real,
-            duration real
-            )
-        """)
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS detection_slices (
+        slice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        detection_id integer,
+        prediction TEXT,
+        confidence REAL,
+        labeled TEXT,
+        curated integer,
+        offset real,
+        duration real,
+        bout_id int
+        )
+    """)
+
+    CONN.cursor().execute("""CREATE INDEX if not exists idx_detection_slices_detection_id ON detection_slices(detection_id)""")
 
     CONN.cursor().execute("""
     CREATE TABLE IF NOT EXISTS weather (
@@ -91,7 +96,7 @@ def db_setup():
     CONN.cursor().execute("""
     CREATE TABLE IF NOT EXISTS bouts (
         bout_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        species TEXT,
+        label TEXT,
         start_detection_id integer,
         end_detection_id integer,
         start_ts int,
@@ -120,8 +125,17 @@ def db_setup():
         share_id INTEGER PRIMARY KEY AUTOINCREMENT,
         provider TEXT,
         provider_id text,
-        detection_id int,
+        shared text,
         share_ts int
+    )
+    """)
+
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS models (
+        model_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        global_id TEXT,
+        parameters text,
+        added_ts int
     )
     """)
 
@@ -165,25 +179,40 @@ def migrate_versions():
     print("Heket migration level was at version", heket_config.LAST_MIGRATED_VERSION)
     print("Heket software is at version", heket_config.VERSION)
 
-    if heket_config.VERSION != heket_config.LAST_MIGRATED_VERSION:
-        print("Searching for migration scripts...")
-        start_version = version_number(heket_config.LAST_MIGRATED_VERSION)
-        end_version = version_number(heket_config.VERSION)
-
-        for i in range(start_version, end_version):
-            start = f"{i / 100:.2f}"
-            stop = f"{(i + 1) / 100:.2f}"
-
-            file = f"migration/{start}_to_{stop}.py"
-
-            if Path(file).exists():
-                print("Execute", file)
-                #this will stop the processing if errors are encountered
-                subprocess.run([sys.executable,file], check=True)
-                #increment the version after each script has executed
-                heket_config.save_config_value("HEKET_LAST_VERSION",stop)
-
-        #and if we finish all, update to the current version
+    if heket_config.LAST_MIGRATED_VERSION == 0.00:
+        print("This Heket has no saved version information. Assuming fresh install.")
         heket_config.save_config_value("HEKET_LAST_VERSION",str(heket_config.VERSION))
     else:
-        print("No migration necessary.")
+        if heket_config.VERSION != heket_config.LAST_MIGRATED_VERSION:
+            print("Searching for migration scripts...")
+            start_version = version_number(heket_config.LAST_MIGRATED_VERSION)
+            end_version = version_number(heket_config.VERSION)
+
+            for i in range(start_version, end_version):
+                start = f"{i / 100:.2f}"
+                stop = f"{(i + 1) / 100:.2f}"
+
+                file = f"migration/{start}_to_{stop}.py"
+
+                if Path(file).exists():
+                    print("Execute", file)
+                    #this will stop the processing if errors are encountered
+                    subprocess.run([sys.executable,file], check=True)
+                    #increment the version after each script has executed
+                    heket_config.save_config_value("HEKET_LAST_VERSION",stop)
+
+            #and if we finish all, update to the current version
+            heket_config.save_config_value("HEKET_LAST_VERSION",str(heket_config.VERSION))
+        else:
+            print("No migration necessary.")
+
+def slice_to_filename(label=None, file=None, duration=None, offset=None):
+    base = Path(file).stem
+    ext = Path(file).suffix
+    dur = str(offset).replace(".", "_")
+    folder = str(duration).replace(".", "_") + "s"
+    dest_path = os.path.join(heket_config.LABELED_DIR, label, folder)
+    return os.path.join(dest_path, base + f"_{dur}" + ext), dest_path
+
+def labels_get():
+    return sorted([p.name for p in Path(heket_config.LABELED_DIR).iterdir() if p.is_dir()])

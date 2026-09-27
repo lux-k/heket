@@ -85,7 +85,8 @@ def get_db():
 
 def update_labels():
     global LABEL_CANDS
-    LABEL_CANDS = sorted([p.name for p in Path(heket_config.LABELED_DIR).iterdir() if p.is_dir()])
+
+    LABEL_CANDS = heket_common.labels_get()
 
 def update_models():
     global CUSTOM_MODELS
@@ -144,8 +145,23 @@ def make_page(title = "Home", content = ""):
 <script src="/web_assets/heket.js" defer></script>'
 </head><body>
 <div id="spectrogram-preview">
-    <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'">
-    <div id="spectrogram-playhead"></div>
+    <div id="spectrogram-area">
+        <img id="spectrogram-image" onerror="this.onerror=null; this.alt='The graph is not available.'" width="500">
+        <div id="spectrogram-playhead"></div>
+        <div id="spectrogram-labels"></div>
+    </div>
+    <div id="spectrogram-label-update"><br>
+    Model prediction was <div style="display: inline" id="slice-model-prediction"></div> """
+    html += make_curation_select(id="slice-curation")
+    html += """<br><br>
+    <button id="slice-replay-button">▶</button><br><br>
+    Apply label of  """
+
+    html += make_label_select(id="slice-label")
+    html += """
+    
+    <button id="slice-save-label-button">Save</button><br><br>
+    </div>
 </div>
 <div id="weather">
 </div>
@@ -252,25 +268,28 @@ def args_session_default(var, default):
     else:
         return default
 
-def make_curation_select( current ):
+def make_curation_select( id ):
     html = ""
-    html += "<select name=\"curated\" onchange=\"this.form.submit()\">"
+    html += f"<select id=\"{id}\" onchange=\"save_slice_curation()\">"
     html += "<option value=\"\">&#10067;</option>"
     html += "<option value=\"1\""
-    if current == 1:
-        html += " selected"
+#    if current == 1:
+#        html += " selected"
     html += ">&#128077;</option>"
     
     html += "<option value=\"0\""
-    if current == 0:
-        html += " selected"
+ #   if current == 0:
+ #       html += " selected"
     html += ">&#128078;</option>"
     html += "</select>"
     return html
     
-def make_label_select():
+def make_label_select(id=""):
     global LABEL_CANDS
-    html = f"<select name=\"label\">"
+    html = f"<select name=\"label\""
+    if len(id) > 0:
+        html += f" id=\"{id}\""
+    html += ">"
     html += f"<option></option>"
     for label in LABEL_CANDS:
         html += f"<option>{label}</option>"
@@ -281,19 +300,19 @@ def make_label_form(rec = None, file = None, route = None):
     found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
     html = ""
     if found:
-        html += f"<form method=\"POST\" action=\"/label_apply\">"
+#        html += f"<form method=\"POST\" action=\"/label_apply\">"
         html += f"<div class=\"detection-item\" data-event-id=\"{rec}\">&#128202;</div>"
         html += f"<audio controls style=\"height:10px;\" src=\"recordings/{file}\"></audio>"
         if sharing_ok():
             html += f"<span style=\"cursor: pointer;\" onclick=\"showShareDialog({rec})\">&#127758;</span> "
-        html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
+#        html += f"<input type=\"hidden\" name=\"rec\" value=\"{rec}\">"
         
-        if route is not None:
-            html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
+#        if route is not None:
+#            html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
         
-        html += make_label_select()
-        html += "<button type=\"submit\">Label</button>"
-        html += "</form>"
+#        html += make_label_select()
+ #       html += "<button type=\"submit\">Label</button>"
+ #       html += "</form>"
     else:
         html += "<br>Recording not found."
     return html
@@ -359,7 +378,7 @@ def label_to_name( label ):
     else:
         return ret_val
         
-def make_detection_infoline( id, recorded, animal, confidence, file, labeled, curated, weather, route=None ):
+def make_detection_infoline( id, recorded, file, curated, weather, route=None, slices=None, slice_filter=None ):
     html = ""
     extra=""
     if route is not None:
@@ -368,24 +387,46 @@ def make_detection_infoline( id, recorded, animal, confidence, file, labeled, cu
     html += f"<a href=\"/review_process?detection_id={id}\">{recorded}</a> "
     if weather is not None:
         html += f"<div class=\"weather-item\" data-event-id=\"{make_weather( weather )}\">&#9925;</div>"
-    html += f" — { label_to_name(animal) } ({confidence:.2f}) "
-    if labeled is not None and labeled != animal:
-        html += f"&#x2192; { label_to_name(labeled) } "
-    html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
-    html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
-    html += make_curation_select(curated) + " "
-    if route is not None:
-        html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
-    html += "</form> "
-    if labeled is not None:
+    html += " — "
+
+    findings = []
+    training = False
+    for s in slices:
+        if slice_filter is not None and not slice_filter(s):
+            pass
+        else:
+            f = f"{ label_to_name(s['prediction']) } ({s['confidence']:.2f}) "
+            match s["curation"]:
+                case None:
+                    f += "&#10067;"
+                case 0:
+                    f += "&#128078;"
+                case 1:
+                    f += "&#128077;"
+
+            if s["labeled"] is not None:
+                training = True
+                if s["labeled"] != s["prediction"]:
+                    f += f"&#x2192; { label_to_name(s['labeled']) } "
+            findings.append(f)
+
+    html += ", ".join(findings)
+#obsolete
+#    html += f"<form style=\"display: inline\" method=\"POST\" action=\"/curate\">"
+#    html += f"<input type=\"hidden\" name=\"rec\" value=\"{id}\">"    
+#    html += make_curation_select(curated) + " "
+#    if route is not None:
+#        html += f"<input type=\"hidden\" name=\"route\" value=\"{route}\">"
+#    html += "</form> "
+    if training:
         html += "<abbr title=\"Included in training\">&#9989;</abbr> "
     return html
 
-def make_detection( id, recorded, animal, confidence, file, labeled, curated, weather=None, route=None ):
+def make_detection( id, recorded, file, curated, weather=None, route=None, slices=None, slice_filter=None ):
     html = ""
     if weather is not None and weather["temp_c"] is None:
         weather = None
-    html += make_detection_infoline( id = id, recorded = recorded, animal = animal, confidence = confidence, file = file, labeled = labeled, curated=curated, weather = weather, route=route )
+    html += make_detection_infoline( id = id, recorded = recorded, file = file, slices=slices, curated=curated, weather = weather, route=route, slice_filter=slice_filter )
     html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
     html += make_label_form( rec=id, file=file, route=route )
     html += "</div>"
@@ -408,37 +449,43 @@ def index():
     bout_page = int(args_session_default("bp", 1))
 
     cur.execute(f"""
-    SELECT count(*), 
-        CASE 
-            when labeled is null THEN species
-            when labeled is not null then labeled
-        END as animal    
-    FROM detections left join class_metadata cmd on cmd.label_name = animal
-    WHERE confidence > ? and target = 1
+        SELECT COUNT(*)
+        FROM detections d
+        WHERE EXISTS (
+            SELECT 1
+            FROM detection_slices ds
+            JOIN class_metadata cmd
+                ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
+            WHERE ds.detection_id = d.id
+            AND ds.confidence > ?
+            AND cmd.target = 1
+        )
     """,[heket_config.CONF_STRONG])
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
-
-#            CASE 
-#            when labeled is null THEN species
-#            when labeled is not null then labeled
-#        END as animal,
-#        CASE
-#            When labeled is null then 0
-#            when labeled is not null then 1
-#        end as validated
-    cur.execute(f"""
-    SELECT detections.id, detections.recorded_ts,
-        species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm,
-        CASE 
-            when labeled is null THEN species
-            when labeled is not null then labeled
-        END as animal  
-    FROM detections left join weather on detections.weather_id = weather.weather_id left join class_metadata cmd on cmd.label_name = animal
-    WHERE confidence > ? and target = ?
-    ORDER BY detections.recorded_ts DESC
-    LIMIT ? offset ?
-    """,[heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limit])
+    cur.execute("""SELECT
+    d.id,
+    d.recorded_ts,
+    d.file,
+    d.curated,
+    w.temp_c,
+    w.humidity,
+    w.pressure_mb,
+    w.rain_rate_mm
+FROM detections d
+LEFT JOIN weather w
+    ON d.weather_id = w.weather_id
+WHERE EXISTS (
+    SELECT 1
+    FROM detection_slices ds
+    JOIN class_metadata cmd
+        ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
+    WHERE ds.detection_id = d.id
+      AND ds.confidence > ?
+      AND cmd.target = ?
+)
+ORDER BY d.recorded_ts DESC
+LIMIT ? OFFSET ?""", [heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limit])
 
     rows = cur.fetchall()
     html += "<div class=\"maingrid\">"
@@ -449,15 +496,15 @@ def index():
 
     for r in rows:
         html += f"<li>"
-        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather)
+        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], slices=detection_get_slices(r[0]), curated = r[3], weather = weather, slice_filter=lambda d: d["target"] == 1)
         html += "</li>"
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
     html += "</ul>"
     
     html += "</div>"
-    
+
     html += "<div class=\"maincard\">"
     html += "<h1>Detection Bouts</h1><ul>"
     html += "<h2>Review</h2><ul>"
@@ -468,7 +515,7 @@ def index():
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute(f"""
-    SELECT bout_id, species, start_ts, end_ts, clips, conf_min, conf_max from bouts order by start_ts desc
+    SELECT bout_id, label, start_ts, end_ts, clips, conf_min, conf_max from bouts order by start_ts desc
     LIMIT ? offset ?
     """, [limit, (bout_page - 1) * limit])
 
@@ -494,7 +541,7 @@ def index():
     html += "</ul>"
     
     html += "<h2>Create</h2><ul>"
-    html += "<form method=\"POST\" action=\"bout_create\">Beginning <input name=\"bout_start\" placeholder=\"2025-01-01T01:23\"> until <input name=\"bout_end\" placeholder=\"2025-01-01T01:23\"><br>for species "
+    html += "<form method=\"POST\" action=\"bout_create\">Beginning <input name=\"bout_start\" placeholder=\"2025-01-01T01:23\"> until <input name=\"bout_end\" placeholder=\"2025-01-01T01:23\"><br>for label "
     html += make_label_select() + "<button type=\"submit\">Create</button></form>"
     html += "</ul>"
 
@@ -504,18 +551,14 @@ def index():
     html += "<div class=\"maincard\">"
     html += "<h1>Target Detections</h1><ul>"
     
-    cur.execute(f"""
-    SELECT 
-            CASE 
-            when labeled is null THEN species
-            when labeled is not null then labeled
-        END as animal,
-    count(*)
-    FROM detections left join class_metadata cmd on cmd.label_name = animal
-    WHERE cmd.target = 1
-    GROUP BY animal
-    ORDER BY count(*) DESC
-    """)
+    cur.execute("""SELECT
+    COALESCE(ds.labeled, ds.prediction) AS label,
+    COUNT(DISTINCT ds.detection_id) AS detection_count
+    FROM detection_slices ds LEFT JOIN class_metadata cmd
+    ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
+    where cmd.target = 1
+    GROUP BY COALESCE(ds.labeled, ds.prediction)
+    order by detection_count desc""")
 
     rows = cur.fetchall()
 
@@ -528,18 +571,14 @@ def index():
     html += "</ul>"
     html += "<h1>Non-Target Detections</h1><ul>"
     
-    cur.execute(f"""
-    SELECT 
-            CASE 
-            when labeled is null THEN species
-            when labeled is not null then labeled
-        END as animal,
-    count(*)
-    FROM detections left join class_metadata cmd on cmd.label_name = animal
-    WHERE cmd.target is null or cmd.target = 0
-    GROUP BY animal
-    ORDER BY count(*) DESC
-    """)
+    cur.execute("""SELECT
+    COALESCE(ds.labeled, ds.prediction) AS label,
+    COUNT(DISTINCT ds.detection_id) AS detection_count
+    FROM detection_slices ds LEFT JOIN class_metadata cmd
+    ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
+    where cmd.target = 0 or cmd.target is null
+    GROUP BY COALESCE(ds.labeled, ds.prediction)
+    order by detection_count desc""")
 
     rows = cur.fetchall()
 
@@ -558,24 +597,36 @@ def index():
     html += "<h1>Iffy Detections</h1><ul>"
 
     cur.execute(f"""
-    SELECT count(*)  
-    FROM detections
-    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
-    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
+        SELECT COUNT(*)
+        FROM detections d
+        WHERE EXISTS (
+            SELECT 1
+            FROM detection_slices ds
+            WHERE ds.detection_id = d.id
+            AND ds.confidence > ? and ds.confidence < ? and ds.labeled is null
+        ) and file not like  \"recording%\"
+    """,[heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX])
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
-    cur.execute(f"""
-    SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm
-    FROM detections left join weather on detections.weather_id = weather.weather_id
-    WHERE confidence > ? and confidence < ? and labeled is null and file not like \"recording%\"
-    ORDER BY confidence asc
-    LIMIT ? offset ?
-    """, [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX,limit, (iffy_page - 1) * limit])
+    cur.execute("""SELECT
+        d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb,  w.rain_rate_mm
+        FROM detections d LEFT JOIN weather w
+        ON d.weather_id = w.weather_id
+        WHERE EXISTS (
+            SELECT 1
+            FROM detection_slices ds
+            WHERE ds.detection_id = d.id
+            AND ds.confidence >= ? and ds.confidence <= ? and ds.labeled is null
+        )
+        ORDER BY d.recorded_ts DESC
+        LIMIT ? OFFSET ?""", [heket_config.CONF_IFFY_MIN, heket_config.CONF_IFFY_MAX, limit, (iffy_page - 1) * limit])
 
     rows = cur.fetchall()
     for r in rows:
+        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
         html += f"<li>"
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6])
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather=weather,
+                                slices=detection_get_slices(r[0]), slice_filter=lambda d: d["confidence"] >= heket_config.CONF_IFFY_MIN and d["confidence"] <= heket_config.CONF_IFFY_MAX)
         html += "</li>"
         html += "<br>"
 
@@ -655,51 +706,74 @@ def assets(filename):
 def files(filename):
     return send_from_directory(heket_config.OUT_DIR, filename)
 
-@app.route("/label_apply", methods=["POST"])
-def label():
-    rec = request.form["rec"]
-    label = request.form["label"]
-    route = None
-    if "route" in request.form:
-        route = request.form["route"]
-
-    if len(label) == 0:
-        return redirect(url_for("index"))
-
-    print(f"Labeling {rec} as {label}")
-
+@app.route("/api/detections/<detectionId>/slices", methods=["GET"])
+def detection_slices_get(detectionId):
+    detectionId = int(detectionId)
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""select labeled, file from detections where id = ?""", [int(rec)])
+    cur.execute("""
+    SELECT slice_id, prediction, confidence, labeled, curated, offset, duration from detection_slices where detection_id = ?
+    """,[detectionId])
+
+    results = []
     rows = cur.fetchall()
-    #this sample was previous labeled... delete the old recording
-    #so the labels stay clean
-    file = rows[0][1]
-    
-    if rows[0][0] is not None:
-        del_file = os.path.join(heket_config.LABELED_DIR, rows[0][0], file)
-        print("Deleted previously labeled file:", del_file)
-        heket_common.delete_file( del_file )
+    for r in rows:
+            results.append( {"slice_id": r[0], "offset": r[5], "duration": r[6], "prediction": r[1], "confidence": r[2], "labeled": r[3], "curation": r[4]} )
 
-    src = Path(os.path.join(heket_config.OUT_DIR, file))
-    dst = Path(os.path.join(heket_config.LABELED_DIR, label, file))
-    print(f"Copy {src} to {dst}")
+    cur.execute("""SELECT duration from detections where id = ? """,[detectionId])
+    rows = cur.fetchall()
 
-    if not dst.exists():
-        shutil.copy(src, dst)
-        
-    # Get existing columns
-    cur.execute("""update detections set labeled = ?, curated = ?  where id = ?""", [label, 1, int(rec)])
-    conn.commit()
-    conn.close()
+    result = {"duration": rows[0][0], "slices": results}
 
-    flash("Recording labeled")
-    if route is None:
-        return redirect(url_for("index"))
-    else:
-        return redirect(route)
-	
+    return result
+
+@app.route("/api/detections/<detectionId>/slice/<sliceId>", methods=["PATCH"])
+def detection_slices_update(detectionId,sliceId):
+    detectionId = int(detectionId)
+    sliceId = int(sliceId)
+
+    if "label" in request.form:
+        label = request.form["label"]
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""select ds.duration, ds.labeled, d.file, ds.offset from detections d join detection_slices ds on d.id = ds.detection_id where slice_id = ?""", [sliceId])
+        row = cur.fetchone()
+        duration = row[0]
+        if row[1] is not None and len(row[1]) > 0:
+            del_file = heket_common.slice_to_filename(label=row[1], file=row[2], duration=row[0], offset=row[3])
+            print("Del file", del_file)
+            heket_common.delete_file( del_file )
+
+        new_file, dst_path = heket_common.slice_to_filename(label=label, file=row[2], duration=row[0], offset=row[3])
+        src_file = os.path.join(heket_config.OUT_DIR, row[2])
+        cmd = 'ffmpeg -y -i ' + src_file + ' -ss ' + str(row[3]) + ' -t ' + str(heket_config.SLICE_TIME) + ' ' + new_file
+        print("Cmd:", cmd)
+        os.makedirs(dst_path, exist_ok=True)
+        subprocess.check_output(cmd, shell=True).decode('utf-8')
+
+        cur.execute("""update detection_slices set labeled = ? where slice_id = ? """,[label,sliceId])
+
+        conn.commit()
+        simple_notify("Slice labeled")
+
+    if "curation" in request.form:
+        curation = request.form["curation"]
+        if len(curation) > 0:
+            curation = int(curation)
+        else:
+            curation = None
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""update detection_slices set curated = ? where slice_id = ?""", [curation, sliceId])
+
+        conn.commit()
+        simple_notify("Slice curated")
+
+    return {}
+
 @app.route("/label_add", methods=["POST"])
 def label_add():
     label = request.form["label"]
@@ -788,7 +862,7 @@ def prepare_audio_file(file, start = 0):
     
     ok = False
     try:
-        cmd = 'ffmpeg -i ' + new_filename + ' -ss ' + str(start) + ' -t ' + str(heket_config.SEGMENT_TIME) + ' -ac 1 -ar ' + str(heket_config.SAMPLE_RATE) + ' ' + trimmed_file
+        cmd = 'ffmpeg -i ' + new_filename + ' -ss ' + str(start) + ' -t ' + str(heket_config.SLICE_TIME) + ' -ac 1 -ar ' + str(heket_config.SAMPLE_RATE) + ' ' + trimmed_file
         print("Cmd:", cmd)
         subprocess.check_output(cmd, shell=True).decode('utf-8')
         ok = True
@@ -840,7 +914,9 @@ def detections_delete():
         stop_id = rows[0][0]
 
     if stop_id != 0 and start_id != 0:
-        cur.execute(f"""select id from detections where id >= ? and id <= ? and curated is null and labeled is null""", [start_id, stop_id])
+        cur.execute(f"""SELECT d.id FROM detections d WHERE d.id >= ? AND d.id <= ? AND 
+            NOT EXISTS ( SELECT 1  FROM detection_slices ds WHERE ds.detection_id = d.id  AND ds.labeled IS NOT NULL)""", [start_id, stop_id])
+        
         rows = cur.fetchall()
         
         recs = []
@@ -862,20 +938,25 @@ def detection_delete( recs ):
     cur = conn.cursor()
 
     to_delete = []
+    slices_delete = []
     for r in recs:
-        cur.execute(f"""select id, file, labeled from detections where id = ?""", [r])
+        cur.execute(f"""select id, file from detections where id = ?""", [r])
         rows = cur.fetchall()
         if len(rows) > 0:
-            to_delete.append( {"id": rows[0][0], "file": rows[0][1], "labeled": rows[0][2]} )
+            to_delete.append( {"id": rows[0][0], "file": rows[0][1]} )
+
+        #clean up slices
+        cur.execute(f"""select d.file, ds.labeled, ds.offset, ds.duration from detections d join detection_slices ds on d.id = ds.detection_id where d.id = ? and ds.labeled is not null""", [r])
+        rows = cur.fetchall()
+        for r in rows:
+            file, path = heket_common.slice_to_filename(label=r[1],file=r[0],duration=r[3],offset=r[2])
+            heket_common.delete_file(file)
+            cur.execute(f"""delete from detection_slices where detection_id = ?""", [r])
 
     for d in to_delete:
-        #delete the labeled file
-        if d["labeled"] is not None:
-            heket_common.delete_file(os.path.join(heket_config.LABELED_DIR, d["labeled"], d["file"]))
-
         #delete the source file
         heket_common.delete_file(os.path.join(heket_config.OUT_DIR, d["file"]))
-        
+
         #delete db record
         cur.execute(f"""delete from detections where id = ?""", [d["id"]])
 
@@ -900,42 +981,71 @@ def detection_share(detectionId):
     if len(data["recipients"]) == 0:
         abort(400)        
 
+    if "label" not in data:
+        abort(400)
+
+    label = data["label"]
     share_cfg = share_conf()
 
     simple_notify("Sharing detection...")
     for recip in data["recipients"]:
         SHARES_IN_PROGRESS[f"{recip}-{str(detectionId)}"] = turtlepond.dates.get_epoch()
-        threading.Thread(target=share_cfg[recip]["share_fn"], kwargs={"detectionId": detectionId, "detection": detection}, daemon=True).start()
+        threading.Thread(target=share_cfg[recip]["share_fn"], kwargs={"detectionId": detectionId, "label": label, "detection": detection}, daemon=True).start()
 
     return {"status": True}
 
-def share_turtlepond(detectionId=None,detection=None,bulk=False):
-    if detectionId is None or detection is None:
+def share_turtlepond(detectionId=None,label=None,sliceId=None,detection=None,bulk=False):
+    if detectionId is None and sliceId is None:
+        return False
+    
+    if detection is None:
         return False
 
-    file = os.path.join(heket_config.OUT_DIR, detection["file"])
+    if sliceId is not None:
+        #detectionId is rewritten
+        #def slice_to_filename(label=None, file=None, duration=None, offset=None):
+        file, path = heket_common.slice_to_filename(label=detection["slices"][sliceId]["labeled"], 
+                                              duration=detection["slices"][sliceId]["duration"],
+                                              offset=detection["slices"][sliceId]["offset"],
+                                              file=detection["file"])
+        label = detection["slices"][sliceId]["labeled"]
+        #detectionid is actually the detectionid, offset and duration
+    else:
+        file = os.path.join(heket_config.OUT_DIR, detection["file"])
+        #detectionid is simply the detectionid
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select latin_name from class_metadata where label_name = ?""",[label])
+    row = cur.fetchone()
+    if row is None:
+        species = None
+    else:
+        species = row[0]
+
     if not os.path.isfile(file):
         return False
 
     provider = "turtlepond"
     with open(file, "rb") as f:
         files = {"audio": f}
-        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": detection.get("species", None), "label": detection["label"]}
+        form_data = {"record": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": species, "label": label}
         response = requests.post(heket_config.TURTLEPOND + "share/turtlepond", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
 
     if response.status_code == 200:
         resp = response.json()
         if not bulk:
             simple_notify(f"TurtlePond.us accepted clip {str(resp['id'])}")
-        share_record(detectionId=detectionId,provider=provider,providerId=str(resp["id"]))
+        share_record(record=detectionId,provider=provider,providerId=str(resp["id"]))
         return True, response.json()
     else:
-        share_clear_in_progress(provider=provider, detectionId=detectionId)
+        share_clear_in_progress(provider=provider, record=detectionId)
         return False
 
 @app.route("/share_turtlepond_bulk", methods=["POST"])
 def share_turtlepond_bulk():
     clip_count = int(request.form["clip_count"])
+    clip_count = 1
     label = request.form["label"]
     req = request.form["route"]
 
@@ -950,22 +1060,23 @@ def share_turtlepond_bulk_thread(label=None, max_count=0):
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute(f"""select d.id from detections d left join detection_shares s on d.id = s.detection_id where d.labeled= ? and s.detection_id is null order by random() limit ?""", [label, max_count])
+    # this right here is an issue... we want to create the share id 
+    cur.execute(f"""select ds.slice_id, ds.detection_id, ds.detection_id || ':' || ds.offset || ':' || ds.duration as record from detection_slices ds left join detection_shares s 
+                    on record = s.shared where ds.duration = ? and ds.labeled= ?
+                     and s.shared is null order by random() limit ?""", [heket_config.SLICE_TIME,label, max_count])
     rows = cur.fetchall()
-    print(rows)
-
     count = 0
 
     for r in rows:
-        SHARES_IN_PROGRESS[f"turtlepond-{str(r[0])}"] = turtlepond.dates.get_epoch()
-        share_turtlepond(r[0], detection_get(r[0]), bulk=True)
+        SHARES_IN_PROGRESS[f"turtlepond-{str(r[2])}"] = turtlepond.dates.get_epoch()
+        share_turtlepond(sliceId=r[0], detectionId=r[2], detection=detection_get(r[1]), bulk=True)
         count = count + 1
         if count % 5 == 0:
             simple_notify(f"Shared {str(count)} out of a max of {str(max_count)} {label} clips")
 
     simple_notify(f"Bulk share of {str(count)} {label} clips complete")
 
-def share_inaturalist(detectionId=None,detection=None):
+def share_inaturalist(detectionId=None,detection=None,label=None):
     if detectionId is None or detection is None:
         return False
 
@@ -975,34 +1086,42 @@ def share_inaturalist(detectionId=None,detection=None):
     if not os.path.isfile(file):
         return False
 
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(f"""select latin_name from class_metadata where label_name = ?""",[label])
+    row = cur.fetchone()
+    if row is None:
+        return False
+
+    species = row[0]
+
     provider = "inaturalist"
     with open(file, "rb") as f:
         files = {"audio": f}
-        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": detection["species"]}
+        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": species}
         response = requests.post(heket_config.TURTLEPOND + "share/inaturalist", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
 
     if response.status_code == 200:
         resp = response.json()
         simple_notify(f"iNaturalist accepted observation {str(resp['id'])}")
-        share_record(detectionId=detectionId,provider=provider,providerId=str(resp["id"]))
+        share_record(record=detectionId,provider=provider,providerId=str(resp["id"]))
         return True, response.json()
     else:
-        share_clear_in_progress(provider=provider, detectionId=detectionId)
+        share_clear_in_progress(provider=provider, record=detectionId)
         return False
 
-def share_record(detectionId=None,provider=None,providerId=None):
+def share_record(record=None,provider=None,providerId=None):
     conn = get_db()
     cur = conn.cursor()
 
-    rec = int(detectionId)
-
-    cur.execute(f"""insert into detection_shares (provider, provider_id, detection_id, share_ts) values (?,?,?,?)""",[provider,providerId,detectionId,turtlepond.dates.get_epoch()])
+    cur.execute(f"""insert into detection_shares (provider, provider_id, shared, share_ts) values (?,?,?,?)""",[provider,providerId,str(record),turtlepond.dates.get_epoch()])
     conn.commit()
-    share_clear_in_progress(provider=provider, detectionId=detectionId)
+    share_clear_in_progress(provider=provider, record=record)
 
-def share_clear_in_progress(provider, detectionId):
+def share_clear_in_progress(provider, record):
     global SHARES_IN_PROGRESS
-    SHARES_IN_PROGRESS.pop(f"{provider}-{str(detectionId)}", None)
+    SHARES_IN_PROGRESS.pop(f"{provider}-{str(record)}", None)
 
 @app.route("/api/detection/<detectionId>", methods=["GET"])
 def detection_get(detectionId):
@@ -1013,49 +1132,44 @@ def detection_get(detectionId):
 
     rec = int(detectionId)
 
-    cur.execute(f"""SELECT detections.id, detections.recorded_ts, species, confidence, file, labeled, curated
-        FROM detections WHERE detections.id = ?""",[detectionId])
+    cur.execute(f"""SELECT detections.id, detections.recorded_ts, file FROM detections WHERE detections.id = ?""",[detectionId])
 
     rows = cur.fetchall()
-    label = rows[0][2]
-    if rows[0][5] is not None:
-        label = rows[0][5]
+
+    cur.execute(f"""select distinct coalesce(labeled, prediction), cmd.latin_name from detection_slices ds left join class_metadata cmd on cmd.label_name = coalesce(labeled, prediction) where detection_id = ? order by labeled""", [detectionId])
+    rows2 = cur.fetchall()
+    labels = []
+    for r in rows2:
+        labels.append({"label": r[0], "species": r[1]})
+
+    cur.execute(f"""select slice_id, offset, duration, labeled from detection_slices where detection_id = ? order by labeled""", [detectionId])
+    rows2 = cur.fetchall()
+    slices = {}
+    for r in rows2:
+        slices[r[0]] = {"offset": r[1], "duration": r[2], "labeled": r[3]}
 
     shareable = []
-
-    species = None
-
     share_cfg = share_conf()
 
     shared = []
-    cur.execute(f"""SELECT provider, provider_id from detection_shares where detection_id = ?""", [detectionId])
+    cur.execute(f"""SELECT provider, provider_id from detection_shares where shared = ?""", [str(detectionId)])
     rows3 = cur.fetchall()
     for r in rows3:
         shared.append({"provider": r[0], "name": share_cfg[r[0]]["name"], "id": r[1], "url": share_cfg[r[0]]["url"](r[1])})
 
     if CAPS is not None:
-        cur.execute(f"""SELECT latin_name from class_metadata where label_name = ?""", [label])
-        rows2 = cur.fetchall()
-
-        if len(rows2) == 1:
-            species = rows2[0][0]
 
         for k in share_cfg.keys():
             if k in CAPS and f"{k}-{str(detectionId)}" not in SHARES_IN_PROGRESS and not any(d.get("provider") == k for d in shared):
-                if k == "turtlepond":
-                    shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"]})
-                if k == "inaturalist":
-                    #requires a species
-                    if species is not None and not any(d["provider"] == "inaturalist" for d in shared):
-                        shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"]})
+                shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"], "class": share_cfg[k].get("class","")})
 
-    result = {"detectionId": detectionId, "label": label, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]),
-             "file": rows[0][4], "shareable": shareable, "species": species, "shared": shared}
+    result = {"detectionId": detectionId, "labels": labels, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]),
+             "file": rows[0][2], "shareable": shareable, "shared": shared, "slices": slices}
 
     return result
 
 def share_conf():
-    return {"inaturalist": {"provider": "inaturalist", "name": "iNaturalist", "url": lambda x: f"https://www.inaturalist.org/observations/{x}",
+    return {"inaturalist": {"provider": "inaturalist", "name": "iNaturalist", "url": lambda x: f"https://www.inaturalist.org/observations/{x}", "class": "share-requires-species",
                              "share_fn": share_inaturalist, "privacy_warning":"Includes the detection audio, date/time, latitude, longitude and reported species."},
             "turtlepond": {"provider": "turtlepond", "name": "TurtlePond.us", "url": lambda x: "", "share_fn": share_turtlepond,
                            "privacy_warning": "Includes the detection audio, date/time, latitude, longitude, label and reported species."}}
@@ -1127,8 +1241,27 @@ def review_event_page(review_id=0, detection_id=0):
 
     html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    cur.execute(f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id WHERE id >= ? and id <= ? ORDER BY id DESC """, [low,high])
-    
+    cur.execute("""SELECT
+        d.id,
+        d.recorded_ts,
+        d.file,
+        d.curated,
+        w.temp_c,
+        w.humidity,
+        w.pressure_mb,
+        w.rain_rate_mm
+    FROM detections d
+    LEFT JOIN weather w
+        ON d.weather_id = w.weather_id
+    WHERE EXISTS (
+        SELECT 1
+        FROM detection_slices ds
+        WHERE ds.detection_id = d.id
+    )	
+    and d.id >= ? and d.id <= ?
+    ORDER BY d.recorded_ts DESC
+    """, [low, high])
+
     rows = cur.fetchall()
     for r in rows:
         html += f"<li>"
@@ -1138,8 +1271,8 @@ def review_event_page(review_id=0, detection_id=0):
         if "review_process" not in route:
             route = url_for("review_process") + "?id=" + str(review_id)
  
-        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=route)
+        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2],curated = r[3], weather = weather, route=route, slices=detection_get_slices(r[0]))
         html += "</li><br>"
         
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
@@ -1174,6 +1307,7 @@ def class_save():
     conn.commit()
     conn.close()
     flash("Class specification saved")
+    notify_pipeline("reload_targets")
     
     global NAME_CACHE
     NAME_CACHE = {}
@@ -1252,41 +1386,45 @@ def class_review():
         html += "<button type=\"submit\">Share</button>"
         html += "</form></div></fieldset>"
 
-    sql_pages = f"""SELECT count(*) FROM detections WHERE """
-    sql_query = f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_pages = f"""SELECT count(*) FROM detections d WHERE  EXISTS (SELECT 1  FROM detection_slices ds  WHERE ds.detection_id = d.id and """
+    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id  WHERE EXISTS (SELECT 1
+        FROM detection_slices ds  WHERE ds.detection_id = d.id and """
+    
     sql_args = []
 
     if labeled == "Y":
-        sql_query += "labeled = ? "
+        sql_query += "ds.labeled = ? "
         sql_args.append(review_class)
-        sql_pages += "labeled = ? "
+        sql_pages += "ds.labeled = ? "
     elif labeled == "N":
-        sql_query += "species = ? and labeled is null "
+        sql_query += "ds.prediction = ? and labeled is null "
         sql_args.append(review_class)
-        sql_pages += "species = ? and labeled is null "
+        sql_pages += "ds.prediction = ? and labeled is null "
     else:
-        sql_query += "((labeled is null and species = ? ) or (labeled = ?)) "
+        sql_query += "((ds.labeled is null and ds.prediction = ? ) or (ds.labeled = ?)) "
         sql_args += [review_class, review_class]
-        sql_pages += "((labeled is null and species = ? ) or (labeled = ?)) "
+        sql_pages += "((ds.labeled is null and ds.prediction = ? ) or (ds.labeled = ?)) "
 
-    sql_query += "and confidence >= ? and confidence <= ? "
+    sql_query += "and ds.confidence >= ? and ds.confidence <= ? "
     sql_args += [conf_min, conf_max]
-    sql_pages += "and confidence >= ? and confidence <= ? "
+    sql_pages += "and ds.confidence >= ? and ds.confidence <= ? "
 
     if curated == "Y":
-        sql_query += "and curated is not null "
-        sql_pages += "and curated is not null "
+        sql_query += "and ds.curated is not null "
+        sql_pages += "and ds.curated is not null "
     elif curated == "N":
-        sql_query += "and curated is null "
-        sql_pages += "and curated is null "
+        sql_query += "and ds.curated is null "
+        sql_pages += "and ds.curated is null "
 
 
     print(sql_query)
     limit = 25
+    sql_pages += ")"
+    print(sql_pages)
     cur.execute(sql_pages, sql_args)
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
-    sql_query += """ORDER BY id DESC LIMIT ? offset ?"""
+    sql_query += """) ORDER BY id DESC LIMIT ? offset ?"""
     sql_args += [limit, (page - 1) * limit]
     cur.execute(sql_query, sql_args)
         
@@ -1308,8 +1446,9 @@ def class_review():
     html += filter_html
     for r in rows:
         html += f"<li>"
-        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather = weather, route=request.full_path, slices=detection_get_slices(r[0]),
+                               slice_filter=lambda d: d["labeled"] == review_class)
         html += "</li><br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("class_review", "page", page, max_page) + "</li>"
@@ -1357,7 +1496,8 @@ def review_delete():
         
     return redirect(url_for("index"))
 
-@app.route("/curate", methods=["POST"])
+#obsolete
+@app.route("/obs_curate", methods=["POST"])
 def curate():
     rec = int(request.form["rec"])
     route = None
@@ -1458,6 +1598,7 @@ def setup():
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
     html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
     html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
+    html += f"<tr><td>Slice Length (s):</td><td><input name=\"SLICE_TIME\" size=\"5\" value=\"{str(heket_config.SLICE_TIME)}\"></td></tr>"
     html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"{long_size}\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
     html += f"<tr><td>Weather Units:</td><td><select name=\"WEATHER_UNITS\">"
     for h in ["imperial","metric"]:
@@ -1598,7 +1739,7 @@ def get_packs(override=False):
     if PACK_CACHE is not None and override is False:
         return PACK_CACHE
     else:
-        response = requests.get(heket_config.TURTLEPOND + f"packs?sample_rate={str(heket_config.SAMPLE_RATE)}&duration={str(heket_config.SEGMENT_TIME)}", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
+        response = requests.get(heket_config.TURTLEPOND + f"packs?sample_rate={str(heket_config.SAMPLE_RATE)}&duration={str(heket_config.SLICE_TIME)}", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
         res = response.json()
         PACK_CACHE = res
         return PACK_CACHE
@@ -1627,8 +1768,7 @@ def download_install_packs(packs):
 
                 # make sure to import the label to both the contrib area
                 # and to the normal label area
-                destination = os.path.join(heket_config.LABELED_DIR, "..", "contrib", pack_info["label"])
-                os.makedirs( os.path.join(heket_config.LABELED_DIR, pack_info["label"]), exist_ok=True)
+                destination = os.path.join(heket_config.LABELED_DIR, "..", "contrib", pack_info["label"], f"{heket_config.SLICE_TIME}s")
                 os.makedirs( destination, exist_ok=True)
 
                 with tarfile.open(fileobj=r.raw, mode="r|*") as tar:
@@ -1689,6 +1829,7 @@ def setup_save():
     model_level = request.form["MODEL_LEVEL"]
     sample_rate = request.form["SAMPLE_RATE"]
     segment_len = request.form["SEGMENT_TIME"]
+    slice_len = request.form["SLICE_TIME"]
     weather_prov = request.form["WEATHER_PROVIDER"]
     weather_units = request.form["WEATHER_UNITS"]
     notif_prov = request.form["NOTIFICATION_PROVIDER"]
@@ -1704,6 +1845,7 @@ def setup_save():
     heket_config.save_config_value("HEKET_MODEL_LEVEL",model_level)
     heket_config.save_config_value("HEKET_SAMPLE_RATE",sample_rate)
     heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
+    heket_config.save_config_value("HEKET_SLICE_TIME",slice_len)
     heket_config.save_config_value("HEKET_WEATHER_PROVIDER",weather_prov)
     heket_config.save_config_value("HEKET_WEATHER_UNITS",weather_units)
     heket_config.save_config_value("HEKET_NOTIFICATION_PROVIDER", notif_prov)
@@ -1788,14 +1930,13 @@ def bout_create():
         bout_start_id = bout_end_id
         bout_end_id = temp
         
-    # so we have the start and end now.. we need the information for the bout
-    cur.execute(f"""select min(recorded_ts), max(recorded_ts), min(confidence), max(confidence), avg(confidence), count(*) 
-        from detections where id >= ? and id <= ? and bout_id is null and ((species = ? and labeled is null) or (labeled = ?))""", [bout_start_id, bout_end_id, species, species])
+    cur.execute(f"""select min(d.recorded_ts), max(d.recorded_ts), min(ds.confidence), max(ds.confidence), avg(ds.confidence), count(distinct d.id) 
+        from detections d join detection_slices ds on d.id = ds.detection_id where id >= ? and id <= ? and ds.bout_id is null and coalesce(ds.labeled, ds.prediction) = ?""", [bout_start_id, bout_end_id, species])
     rows = cur.fetchall()
     if len(rows) > 0:
-        cur.execute(f"""insert into bouts (species, start_detection_id, end_detection_id, start_ts, end_ts, conf_min, conf_max, conf_avg, clips) values (?,?,?,?,?,?,?,?,?)""",[species, bout_start_id, bout_end_id] + list(rows[0]))
+        cur.execute(f"""insert into bouts (label, start_detection_id, end_detection_id, start_ts, end_ts, conf_min, conf_max, conf_avg, clips) values (?,?,?,?,?,?,?,?,?)""",[species, bout_start_id, bout_end_id] + list(rows[0]))
         bout_id = cur.lastrowid
-        cur.execute(f"""update detections set bout_id = ? where  id >= ? and id <= ? and bout_id is null and ((species = ? and labeled is null) or (labeled = ?))""",[bout_id, bout_start_id, bout_end_id, species, species])
+        cur.execute(f"""update detection_slices set bout_id = ? where  detection_id >= ? and detection_id <= ? and bout_id is null and coalesce(labeled, prediction) = ?""",[bout_id, bout_start_id, bout_end_id, species])
         conn.commit()
         flash("Bout created")
     else:
@@ -1809,7 +1950,7 @@ def bout_delete():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"""update detections set bout_id = null where bout_id = ?""", [bout_id])
+    cur.execute(f"""update detection_slices set bout_id = null where bout_id = ?""", [bout_id])
     cur.execute(f"""delete from bouts where bout_id = ?""", [bout_id])
     conn.commit()
     flash("Bout deleted")
@@ -1875,22 +2016,30 @@ def bout_review():
     html += "</textarea> <button type=\"submit\">Save</button>"
     html += "</form>"
 
-    sql_pages = f"""SELECT count(*) FROM detections WHERE """
-    sql_query = f"""SELECT id, detections.recorded_ts, species, confidence, file, labeled, curated, temp_c, humidity, pressure_mb, rain_rate_mm FROM detections left join weather on detections.weather_id = weather.weather_id  WHERE """
+    sql_pages = f"""SELECT count(*) FROM detections d WHERE  EXISTS (SELECT 1  FROM detection_slices ds  WHERE ds.detection_id = d.id and """
+    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id  WHERE EXISTS (SELECT 1
+        FROM detection_slices ds  WHERE ds.detection_id = d.id and """
+    
     sql_args = []
 
     if labeled == "Y":
-        sql_query += "labeled is not null "
-        sql_pages += "labeled is not null "
+        sql_query += "ds.labeled is not null "
+        sql_pages += "ds.labeled is not null "
     elif labeled == "N":
-        sql_query += "labeled is null "
-        sql_pages += "labeled is null "
+        sql_query += "ds.labeled is null "
+        sql_pages += "ds.labeled is null "
     else:
-        sql_query += "species is not null "
-        sql_pages += "species is not null "
+        sql_query += "1=1 "
+        sql_pages += "1=1 "
 
-    sql_query += "and bout_id = ?"
-    sql_pages += "and bout_id = ?"
+        pass
+
+    sql_query += "and ds.bout_id = ?"
+    sql_pages += "and ds.bout_id = ?"
+
+    sql_query += ")"
+    sql_pages += ")"
+
     sql_args += [bout_id]
 
     limit = 25
@@ -1920,14 +2069,29 @@ def bout_review():
     html += filter_html
     for r in rows:
         html += f"<li>"
-        weather = {"temp_c": r[7], "humidity": r[8], "pressure_mb": r[9], "rain_rate_mm": r[10]}
-        html += make_detection(id = r[0], recorded = turtlepond.date.epoch_to_local(r[1]), animal = r[2], confidence = r[3], file = r[4], labeled = r[5], curated = r[6], weather = weather, route=request.full_path)
+        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[6], weather=weather, route=request.full_path, slices=detection_get_slices(r[0]),
+                               slice_filter=lambda d: d["bout_id"] == bout_id)
         html += "</li><br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("bout_review", "page", page, max_page) + "</li>"
     html += "</ul>"
 
     return make_page(title = "Review Bout", content = html)
+
+def detection_get_slices(detection_id):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""select ds.slice_id, ds.prediction, ds.confidence, ds.labeled, cmd.target, ds.curated, ds.bout_id from detection_slices ds left join class_metadata cmd
+        ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
+        where detection_id = ?
+    """, [detection_id])
+    slices = []
+    for s in cur.fetchall():
+        slices.append({"slice_id": s[0], "prediction": s[1], "confidence": s[2], "labeled": s[3], "target": s[4], "curation": s[5], "bout_id": s[6]})
+
+    return slices
 
 @app.route('/last_heard')
 def last_heard():
@@ -2077,6 +2241,52 @@ def publish(event):
 def start_background_services():
     if False:
         threading.Thread(target=classifier_watcher, daemon=True).start()
+
+#obsolete
+@app.route("/obs_label_apply", methods=["POST"])
+def obs_label():
+    rec = request.form["rec"]
+    label = request.form["label"]
+    route = None
+    if "route" in request.form:
+        route = request.form["route"]
+
+    if len(label) == 0:
+        return redirect(url_for("index"))
+
+    print(f"Labeling {rec} as {label}")
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""select labeled, file from detections where id = ?""", [int(rec)])
+    rows = cur.fetchall()
+    #this sample was previous labeled... delete the old recording
+    #so the labels stay clean
+    file = rows[0][1]
+    
+    if rows[0][0] is not None:
+        del_file = os.path.join(heket_config.LABELED_DIR, rows[0][0], file)
+        print("Deleted previously labeled file:", del_file)
+        heket_common.delete_file( del_file )
+
+    src = Path(os.path.join(heket_config.OUT_DIR, file))
+    dst = Path(os.path.join(heket_config.LABELED_DIR, label, file))
+    print(f"Copy {src} to {dst}")
+
+    if not dst.exists():
+        shutil.copy(src, dst)
+        
+    # Get existing columns
+    cur.execute("""update detections set labeled = ?, curated = ?  where id = ?""", [label, 1, int(rec)])
+    conn.commit()
+    conn.close()
+
+    flash("Recording labeled")
+    if route is None:
+        return redirect(url_for("index"))
+    else:
+        return redirect(route)
 
 if __name__ == "__main__":
     start_background_services()

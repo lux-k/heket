@@ -1,3 +1,5 @@
+import uuid
+import json
 import numpy as np
 import librosa
 import heket_config
@@ -8,6 +10,8 @@ import librosa.display
 import matplotlib.pyplot as plt
 import re
 import random
+import turtlepond.dates
+from pathlib import Path
 
 def load_model_from_file(file):
     if file.endswith(".pkl"):
@@ -21,11 +25,11 @@ def load_model_from_file(file):
     else:
         raise NotImplementedError()
 
-def load_model_from_mode(mode):
+def load_model_from_mode(mode, sample_rate=None, slice_time=None):
     if mode in ["mfcc_simple","mfcc_deltas"]:
-        return RandomForestModel(mode=heket_config.MODEL_LEVEL)
+        return RandomForestModel(mode=heket_config.MODEL_LEVEL, sample_rate=sample_rate, slice_time=slice_time)
     elif mode in ["cnn_sg"]:
-        return CnnModel(mode=heket_config.MODEL_LEVEL)
+        return CnnModel(mode=heket_config.MODEL_LEVEL, sample_rate=sample_rate, slice_time=slice_time)
     else:
         print("Unknown operating mode", mode)
         return None
@@ -68,6 +72,9 @@ def generate_spectrogram(wav_file, output_file, n_mels=128):
 class HeketModel:
     file = ""
     model = None
+    sample_rate = heket_config.SAMPLE_RATE
+    slice_time = heket_config.SLICE_TIME
+    meta_data = {}
     
     def predict(self, path):
         raise NotImplementedError()
@@ -86,9 +93,15 @@ class HeketModel:
             if file.endswith(".wav")
         ]
 
+    def process_metadata(self):
+        self.sample_rate = self.meta_data["sample_rate"]
+        self.slice_time = self.meta_data["slice_duration"]
+
     def get_files(self, source_path, label):
-        local_files = self.wav_files(os.path.join(source_path,label))
-        contrib_files = self.wav_files(os.path.join(source_path, "..", "contrib", label))
+        #source path = root of _labeled_ recordings
+        slice_part = str(heket_config.SLICE_TIME).replace(".","_") + "s"
+        local_files = self.wav_files(os.path.join(source_path, label, slice_part))
+        contrib_files = self.wav_files(os.path.join(source_path, "../", "contrib", label, slice_part))
 
         contrib_count = max(0, len(contrib_files) - len(local_files))
 
@@ -97,18 +110,40 @@ class HeketModel:
 
         return contrib_files + local_files
 
+    def save_metadata(self):
+        json_file = self.file.replace(Path(self.file).suffix,".json")
+
+        with open(json_file, "w") as file:
+            json.dump(self.meta_data, file)        
+
+    def load_metadata(self):
+        md_file = self.file.replace(Path(self.file).suffix,".json")
+        if Path(md_file).is_file():
+            with open(md_file, "r", encoding="utf-8") as file:
+                data = json.load(file)            
+            self.meta_data = data
+            self.process_metadata()
+        else:
+            #with no meta data default to the current config
+            self.sample_rate = heket_config.SAMPLE_RATE
+            self.slice_time = heket_config.SLICE_TIME
+
 class EmptyModel(HeketModel):
     pass
 
 class RandomForestModel(HeketModel):
     mode = "unknown"
     
-    def __init__(self, file=None, mode=None):
+    def __init__(self, file=None, mode=None, sample_rate=None, slice_time=None):
         import joblib
         
         if file is not None:
             self.file = file
             self.model = joblib.load(file)
+            self.load_metadata()
+        else:
+            self.sample_rate=sample_rate
+            self.slice_time=slice_time
 
         if mode is None:
             if self.model.n_features_in_ == 20:
@@ -193,29 +228,44 @@ class RandomForestModel(HeketModel):
         model.fit(X_train, y_train)
 
         # Save model
-        file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".pkl")
-        joblib.dump(model, file)
+        self.file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".pkl")
+        joblib.dump(model, self.file)
         print("Classes:", model.classes_)
-        print(f"Model saved as {file}")
+        print(f"Model saved as {self.file}")
+        self.meta_data = {"metadata_version": 1, "uuid": str(uuid.uuid4()), "filename": Path(self.file).name, "creation_date": turtlepond.dates.get_epoch(), "sample_rate": self.sample_rate,
+                          "slice_duration": self.slice_time, "labels": model.classes_.tolist()}
         
 class CnnModel(HeketModel):
     label_file = ""
     labels = []
     mode = "unknown"
     
-    def __init__(self, file=None, mode=None):
+    def __init__(self, file=None, mode=None, sample_rate=None, slice_time=None):
         from tensorflow import keras
         
         if file is not None:
             self.file = file
+            self.load_metadata()
             if "_sg" in file:
                 self.mode = "cnn_sg"
             self.model = keras.models.load_model(file)
-            self.label_file = self.file.replace(".keras", ".labels")
-            with open(self.label_file) as f:
-                self.labels = [line.strip() for line in f]        
+            if len(self.labels) == 0:
+                #may not be present in the json metadata, try loading elsewhere for legacy
+                self.label_file = self.file.replace(".keras", ".labels")
+                print(f"Loading labels from {self.label_file}")
+                with open(self.label_file) as f:
+                    self.labels = [line.strip() for line in f]
+                    self.slice_time = slice_time
+                    self.sample_rate = sample_rate
+            print(self.labels)
         else:
             self.mode = mode
+            self.sample_rate=sample_rate
+            self.slice_time=slice_time
+
+    def process_metadata(self):
+        super().process_metadata()
+        self.labels = self.meta_data["labels"]
 
     def predict(self, features):
         features = np.expand_dims(features, axis=0)
@@ -242,7 +292,7 @@ class CnnModel(HeketModel):
             return None
 
     def normalize_audio(self, y, sr):
-        TARGET_SAMPLES = heket_config.SEGMENT_TIME * sr
+        TARGET_SAMPLES = int(self.slice_time * sr)
 
         if len(y) > TARGET_SAMPLES:
             y = y[:TARGET_SAMPLES]
@@ -307,14 +357,14 @@ class CnnModel(HeketModel):
         # Train
         model.fit(X, y_encoded, epochs=10, batch_size=16 )
 
-        file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
-        model.save(file)
+        self.file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
+        model.save(self.file)
         
-        label_file = file.replace(".keras", ".labels")
+        #label_file = self.file.replace(".keras", ".labels")
 
-        with open(label_file, "w") as f:
-            for label in encoder.classes_:
-                f.write(f"{label}\n")
+        #with open(label_file, "w") as f:
+        #    for label in encoder.classes_:
+        #        f.write(f"{label}\n")
 
         predictions = model.predict(X)
         loss_fn = keras.losses.SparseCategoricalCrossentropy(
@@ -323,7 +373,7 @@ class CnnModel(HeketModel):
 
         losses = loss_fn(y_encoded, predictions).numpy()        
 
-        loss_file = file.replace(".keras",".loss")
+        loss_file = self.file.replace(".keras",".loss")
         with open(loss_file, "w") as f:
             for path, loss in sorted(
                 zip(files, losses),
@@ -333,9 +383,11 @@ class CnnModel(HeketModel):
                 f.write(f"{loss}\t{path}\n")
 
         
-        print(f"Model saved as {file}")
-        print(f"Labels saved as {label_file}")    
+        print(f"Model saved as {self.file}")
+        #print(f"Labels saved as {label_file}")    
         print("Classes:", encoder.classes_)
+        self.meta_data = {"metadata_version": 1, "uuid": str(uuid.uuid4()), "filename": Path(self.file).name, "creation_date": turtlepond.dates.get_epoch(), "sample_rate": self.sample_rate,
+                          "slice_duration": self.slice_time, "labels": encoder.classes_.tolist()}
         
 class BirdNETModel(HeketModel):
     label_file = ""

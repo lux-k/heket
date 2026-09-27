@@ -4,7 +4,6 @@ import heket_classifier
 
 DATASET_PATH = heket_config.LABELED_DIR
 
-os.makedirs(heket_config.CUSTOM_MODEL_DIR, exist_ok=True)
-
-model = heket_classifier.load_model_from_mode(heket_config.MODEL_LEVEL)
+model = heket_classifier.load_model_from_mode(heket_config.MODEL_LEVEL, sample_rate=heket_config.SAMPLE_RATE, slice_time=heket_config.SLICE_TIME)
 model.train(DATASET_PATH)
+model.save_metadata()

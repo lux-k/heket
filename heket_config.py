@@ -25,7 +25,8 @@ MODEL_FILE = None
 RTSP_URL = None
 MODEL_LEVEL = None
 SAMPLE_RATE = 0
-SEGMENT_TIME = 0
+SEGMENT_TIME = 0.0
+SLICE_TIME = 0.0
 
 CONF_STRONG = None
 CONF_IFFY_MIN = None
@@ -50,6 +51,7 @@ REC_DIR = os.getenv("HEKET_REC_DIR", os.path.join(DATA_DIR, "recordings"))
 IN_DIR = os.path.join(REC_DIR, "unprocessed")
 OUT_DIR = os.path.join(REC_DIR, "processed")
 LABELED_DIR = os.path.join(REC_DIR, "labeled")
+CONTRIB_DIR = os.path.join(REC_DIR, "contrib")
 UPLOAD_DIR = os.path.join(REC_DIR, "uploads")
 
 FILE_FORMAT = "%Y%m%d_%H%M%S.wav"
@@ -69,6 +71,7 @@ def reload():
     global MODEL_LEVEL
     global SAMPLE_RATE
     global SEGMENT_TIME
+    global SLICE_TIME
 
     global CONF_STRONG
     global CONF_IFFY_MIN
@@ -93,7 +96,8 @@ def reload():
     RTSP_URL = os.getenv("HEKET_RTSP_URL", "")
     MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "cnn_sg")
     SAMPLE_RATE = int(os.getenv("HEKET_SAMPLE_RATE", 16000))
-    SEGMENT_TIME = int(os.getenv("HEKET_SEGMENT_TIME", 15))
+    SEGMENT_TIME = float(os.getenv("HEKET_SEGMENT_TIME", 15))
+    SLICE_TIME = float(os.getenv("HEKET_SLICE_TIME", SEGMENT_TIME))
 
     CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
     CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))

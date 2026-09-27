@@ -16,6 +16,7 @@ import requests
 import json
 import threading
 from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
+import math
 
 # ==== CONFIG ====
 import heket_config
@@ -37,9 +38,6 @@ def handle_reload(signum, frame):
 
 signal.signal(signal.SIGUSR1, handle_reload)
 
-# ==== LOAD MODEL ====
-model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
-
 weather = None
 
 AUDIO_CHECK = 50
@@ -53,6 +51,24 @@ conn = heket_common.get_db()
 cur = conn.cursor()
 
 bouts = {}
+
+# ==== LOAD MODEL ====
+model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
+
+def register_model(model):
+    if model.meta_data is not None and "uuid" in model.meta_data:
+        cur.execute("select model_id from models where global_id = ?", [model.meta_data["uuid"]])
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("insert into models (global_id, parameters, added_ts) values (?,?,?)", [model.meta_data["uuid"],json.dumps(model.meta_data),turtlepond.dates.get_epoch()])
+            conn.commit()
+            return cur.lastrowid
+        else:
+            return row[0]
+    else:
+        return None
+
+MODEL_ID = register_model(model)
 
 def update_weather():
     global weather
@@ -103,8 +119,7 @@ def reload_config():
     
 reload_config()
 
-# ==== FEATURE EXTRACTION ====
-def extract_features(file):
+def load_audio(file):
     global AUDIO_CHECK
     y, sr = librosa.load(file, sr=heket_config.SAMPLE_RATE)
     AUDIO_CHECK += 1
@@ -113,38 +128,115 @@ def extract_features(file):
             heket_config.save_alert("⚠️ Audio likely missing or silent")
         AUDIO_CHECK = 0
 
-    return model.extract_features_from_audio(y, sr)
+    return y, sr
 
-def bout_get(species):
+def process_file(path):
+    global weather
+    global MODEL_ID
+    try:
+        #this is the complete audio segment
+        y, sr = load_audio(path)
+
+        slice_samples = round(model.slice_time * sr)
+        segment_samples = round(heket_config.SEGMENT_TIME * sr)
+
+        results = []
+
+        for start_sample in range(0, segment_samples, slice_samples):
+            end_sample = start_sample + slice_samples
+            audio_slice = y[start_sample:end_sample]
+
+            features = model.extract_features_from_audio(audio_slice, sr)
+            prediction, confidence = model.predict(features)
+
+            results.append({
+                "offset": start_sample / sr,
+                "duration": model.slice_time,
+                "prediction": prediction,
+                "confidence": confidence
+            })
+
+
+        #TODO: remove this when the columns go
+        prediction = results[0]["prediction"]
+        confidence = results[0]["confidence"]
+
+        if True:
+            weather_id = None
+            if weather is not None:
+                weather_id = weather["id"]
+
+            #cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
+            cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, duration, sample_rate, model_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         [turtlepond.dates.datetime_to_epoch(ts_from_filename(path)), turtlepond.dates.get_epoch(), prediction, confidence, os.path.basename(path), weather_id, round(librosa.get_duration(y=y, sr=sr),2), sr, MODEL_ID])
+
+            detection_id = cur.lastrowid
+            bout_id = bout_get(label=prediction,detection_id=detection_id)
+
+            for res in results:
+                cur.execute("""INSERT INTO detection_slices (detection_id, offset, duration, prediction, confidence, bout_id) VALUES (?, ?, ?, ?, ?,?)""",
+                            [detection_id, res["offset"], res["duration"], res["prediction"], res["confidence"], bout_id])                
+                bout_notate(label=res["prediction"],confidence=res["confidence"],detection_id=detection_id)
+
+            conn.commit()
+
+            notify_web(topic="soundscape", data={"label": prediction, "confidence": confidence, "detection_id": detection_id})
+#            notify_web(topic="notification", data={"message": "This is a test message"})
+            
+            heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
+        else:
+           heket_common.delete_file(path)
+
+        print(f"{path} | {prediction} ({confidence:.2f})")
+
+    except Exception as e:
+        print(f"Error processing {path}: {e}")
+        heket_common.delete_file(path)
+
+def cache_targets():
+    cur.execute("""select label_name from class_metadata where target = ?""",[1])
+    rows = cur.fetchall()
+
+    results = []
+    for r in rows:
+        results.append(r[0])
+
+    return results
+
+def bout_get(label, detection_id):
     global bouts
-    
-    if species.startswith('nonfrog_'):
+    global TARGET_LABELS
+
+    if not label in TARGET_LABELS:
         #not a target, no bout
         return None
     else:
         # its a frog.. see if a bout exists
         # close if necessary
-        bout_close(species)
+        bout_close(label)
             
-        if species in bouts:
-            bout_increment(species)
-            return bouts[species]["bout_id"] #may be none or a number
+        if label in bouts:
+            bout_increment(label, detection_id)
+            return bouts[label]["bout_id"] #may be none or a number
         else:
             #new bout completely
             #bouts[species] = {"start_id": None, "start_time": datetime.now().isoformat(), "detections": 0, "last_time": time.time(), "bout_id": None, "end_time": datetime.now().isoformat(), "conf_min": None, "conf_max": None, "conf_total": 0}
-            bouts[species] = {"start_id": None, "start_time": turtlepond.dates.get_epoch(), "detections": 0, "last_time": time.time(), "bout_id": None,
-                               "end_time": turtlepond.dates.get_epoch(), "conf_min": None, "conf_max": None, "conf_total": 0}
-            bout_increment(species)
+            bouts[label] = {"start_id": None, "start_time": turtlepond.dates.get_epoch(), "detections": 0, "last_time": time.time(), "bout_id": None,
+                               "end_time": turtlepond.dates.get_epoch(), "conf_min": None, "conf_max": None, "conf_total": 0, "last_id": 0, "clips": 0}
+            bout_increment(label, detection_id)
         
-        return bouts[species]["bout_id"]
+        return bouts[label]["bout_id"]
 
-def bout_increment(species):
+def bout_increment(label, detection_id):
     global bouts
 
-    if species in bouts: #don't have to check the time because it would've been closed already
-        bouts[species]["detections"] += 1
-        if bouts[species]["bout_id"] is None and bouts[species]["detections"] >= heket_config.BOUT_MIN_CLIPS:
-            bout_open(species)
+    if label in bouts: #don't have to check the time because it would've been closed already
+        #if bouts[label]["
+        if bouts[label]["last_id"] != detection_id:
+            bouts[label]["last_id"] = detection_id
+            bouts[label]["detections"] += 1
+            if bouts[label]["bout_id"] is None and bouts[label]["detections"] >= heket_config.BOUT_MIN_CLIPS:
+                bout_open(label)
 
 def bout_notify(msg):
     if heket_config.NOTIFICATION_PROVIDER is not None and len(heket_config.NOTIFICATION_PROVIDER) > 0:
@@ -160,15 +252,15 @@ def bout_notify(msg):
             except Exception as e:
                 print("posting to pushover failed - " + str(e))
     
-def bout_open(species):
+def bout_open(label):
     global bouts
-    print(species, "calling bout has begun")
-    bout_notify("🐸 " + species + " calling bout started")
-    cur.execute("""INSERT INTO bouts (species, start_detection_id, start_ts) values (?,?,?)""", [species, bouts[species]["start_id"], bouts[species]["start_time"]])
-    bouts[species]["bout_id"] = cur.lastrowid
+    print(label, "calling bout has begun")
+    bout_notify("🐸 " + label + " calling bout started")
+    cur.execute("""INSERT INTO bouts (label, start_detection_id, start_ts) values (?,?,?)""", [label, bouts[label]["start_id"], bouts[label]["start_time"]])
+    bouts[label]["bout_id"] = cur.lastrowid
     
     #back fill the first couple detections that had an empty bout id
-    cur.execute("""update detections set bout_id = ? where species = ? and id >= ? and id <= ? and bout_id is null""", [bouts[species]["bout_id"], species, bouts[species]["start_id"], bouts[species]["last_id"]])
+    cur.execute("""update detection_slices set bout_id = ? where prediction = ? and id >= ? and id <= ? and bout_id is null""", [bouts[label]["bout_id"], label, bouts[label]["start_id"], bouts[label]["last_id"]])
     
     conn.commit()
 
@@ -180,7 +272,8 @@ def bout_clean_orphan():
     count = 0
     for row in rows:
         #we have the bout_id of a dangling bout now
-        cur.execute("""select max(id), max(recorded_ts), min(confidence), max(confidence), avg(confidence), count(*), bout_id from detections where bout_id = ?""", [ row[0] ])
+        cur.execute("""select max(d.id), max(d.recorded_ts), min(ds.confidence), max(ds.confidence), avg(ds.confidence), count(distinct d.id), ds.bout_id from 
+            detections d join detection_slices ds where ds.bout_id = ?""", [ row[0] ])
         vals = cur.fetchall()
         if len(vals) > 0:
             cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ?""", vals[0])
@@ -189,43 +282,41 @@ def bout_clean_orphan():
     conn.commit()
     print("Cleaned up", count, "dangling bouts")
     
-
-def bout_close(species, force=False):
+def bout_close(label, force=False):
     global bouts
     
     # if its in there AND it has gone silent...
-    if species in bouts and (force or (bouts[species]["last_time"] + heket_config.BOUT_MAX_SILENT) <= time.time()):
+    if label in bouts and (force or (bouts[label]["last_time"] + heket_config.BOUT_MAX_SILENT) <= time.time()):
         #save the bout info if present
-        if bouts[species]["bout_id"] is not None:
-            print(species, "calling bout has ended")
+        if bouts[label]["bout_id"] is not None:
+            print(label, "calling bout has ended")
             cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ?""",
-                [bouts[species]["last_id"], bouts[species]["end_time"], bouts[species]["conf_min"], bouts[species]["conf_max"], bouts[species]["conf_avg"], bouts[species]["detections"], bouts[species]["bout_id"]])
+                [bouts[label]["last_id"], bouts[label]["end_time"], bouts[label]["conf_min"], bouts[label]["conf_max"], bouts[label]["conf_avg"], bouts[label]["detections"], bouts[label]["bout_id"]])
             conn.commit()
         
         #regardless zero out the old bout
-        del bouts[species]
+        del bouts[label]
 
-def bout_notate(species, confidence, detection_id):
+def bout_notate(label, confidence, detection_id):
     global bouts
     
-    if species in bouts:
-        if bouts[species]["start_id"] is None:
-            bouts[species]["start_id"] = detection_id
+    if label in bouts:
+        if bouts[label]["start_id"] is None:
+            bouts[label]["start_id"] = detection_id
         
-        bouts[species]["last_id"] = detection_id
-        #bouts[species]["end_time"] = datetime.now().isoformat()
-        bouts[species]["end_time"] = turtlepond.dates.get_epoch()
-        bouts[species]["last_time"] = time.time()
+        bouts[label]["last_id"] = detection_id
+        bouts[label]["end_time"] = turtlepond.dates.get_epoch()
+        bouts[label]["last_time"] = time.time()
         
-        if bouts[species]["conf_min"] is None or confidence < bouts[species]["conf_min"]:
-            bouts[species]["conf_min"] = confidence
+        if bouts[label]["conf_min"] is None or confidence < bouts[label]["conf_min"]:
+            bouts[label]["conf_min"] = confidence
         
-        if bouts[species]["conf_max"] is None or confidence > bouts[species]["conf_max"]:
-            bouts[species]["conf_max"] = confidence
+        if bouts[label]["conf_max"] is None or confidence > bouts[label]["conf_max"]:
+            bouts[label]["conf_max"] = confidence
 
-        bouts[species]["conf_total"] += confidence
-        
-        bouts[species]["conf_avg"] = bouts[species]["conf_total"] / bouts[species]["detections"]
+        bouts[label]["conf_total"] += confidence
+        bouts[label]["clips"] += 1
+        bouts[label]["conf_avg"] = bouts[label]["conf_total"] / bouts[label]["clips"]
 
 def notify_web(topic, data):
     try:
@@ -250,44 +341,6 @@ def ts_from_filename(path):
     fname = os.path.basename(path)
 
     return datetime.strptime(fname, heket_config.FILE_FORMAT).replace(tzinfo=turtlepond.dates.HOST_TZ)
-
-def process_file(path):
-    global weather
-    try:
-        features = extract_features(path)
-        species, confidence = model.predict(features)
-        #if a nonfrog and it's lower confidence OR it's labeled as a frog above min confidence....
-        #if (species.startswith("nonfrog_") and confidence < heket_config.CONF_IFFY_MAX) or confidence > heket_config.CONF_IFFY_MIN:
-        if True:
-            weather_id = None
-            if weather is not None:
-                weather_id = weather["id"]
-
-            bout_id = bout_get(species=species)
-
-            #cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
-            cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""",
-                         [turtlepond.dates.datetime_to_epoch(ts_from_filename(path)), turtlepond.dates.get_epoch(), species, confidence, os.path.basename(path), weather_id, bout_id])
-            
-            detection_id = cur.lastrowid
-            conn.commit()
-
-            bout_notate(species=species,confidence=confidence,detection_id=detection_id)
-
-            #soundscape_update(label=species, confidence=confidence)
-            
-            notify_web(topic="soundscape", data={"label": species, "confidence": confidence, "detection_id": detection_id})
-#            notify_web(topic="notification", data={"message": "This is a test message"})
-            
-            heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
-        else:
-           heket_common.delete_file(path)
-
-        print(f"{path} | {species} ({confidence:.2f})")
-
-    except Exception as e:
-        print(f"Error processing {path}: {e}")
-        heket_common.delete_file(path)
 
 # ==== START FFMPEG ====
 def start_ffmpeg():
@@ -338,20 +391,27 @@ def do_maintenance():
         #   they are old enough
         #   they are unlabeled
         #   they are non frogs OR they are very low confidence frogs
-        cur.execute(f"""SELECT d.id, d.file FROM detections d WHERE d.id <= ? AND labeled is null and
-            (species like ? or confidence < ?) and NOT EXISTS ( SELECT 1 FROM reviews r WHERE
-            d.id BETWEEN r.detection_id - {buff} AND r.detection_id + {buff} )""", [detection_id, "nonfrog_%", heket_config.CONF_STRONG])
+        cur.execute(f"""SELECT d.id, d.file FROM detections d  WHERE d.id <= ?
+            AND NOT EXISTS (
+                SELECT 1 FROM detection_slices ds LEFT JOIN class_metadata cmd ON COALESCE(ds.labeled, ds.prediction) = cmd.label_name
+                WHERE ds.detection_id = d.id AND 
+                (ds.labeled is not null or (cmd.target = 1 and ds.confidence >= ?))
+            )
+            AND NOT EXISTS ( SELECT 1 FROM reviews r WHERE
+            d.id BETWEEN r.detection_id - {buff}  AND r.detection_id + {buff})""", [detection_id, heket_config.CONF_STRONG])
         rows = cur.fetchall()
         print("Deleting", len(rows), "old files")
         for r in rows:
             #delete all the files
             heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
+            cur.execute("delete from detection_slices where detection_id = ?", [r[0]])
             cur.execute("delete from detections where id = ?", [r[0]])
+
         cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
         conn.commit()
 
-        for species in list(bouts):
-            bout_close(species=species)
+        for label in list(bouts):
+            bout_close(label=label)
 # ==== MAIN LOOP ====
 def main():
     global reload_flag
@@ -440,13 +500,15 @@ def main():
             print("Stopping...")
 
             #close any bouts before exiting
-            for species in list(bouts):
-                bout_close(species=species,force=True)
+            for label in list(bouts):
+                bout_close(label=label,force=True)
 
             if ffmpeg is not None:
                 ffmpeg.terminate()
             web.terminate()
             break
+
+TARGET_LABELS = cache_targets()
 
 app = None
 app = Flask(__name__)
@@ -460,14 +522,22 @@ def api_control():
 def api_reload_config():
     return json.dumps(do_api_call("reload_config"))
 
+@app.route("/reload_targets", methods=["POST"])
+def api_reload_targets():
+    return json.dumps(do_api_call("reload_targets"))
+
 def do_api_call(command, opts={}):
     ok = True
     msg = None
+    global TARGET_LABELS
 
     try:
         if command == "reload_config":
             handle_reload(None,None)
             msg = "Configuration reloaded"
+        elif command == "reload_targets":
+            print("Reloading targets")
+            TARGET_LABELS = cache_targets()            
     except Exception as e:
         ok = False
         msg = "Command failed"

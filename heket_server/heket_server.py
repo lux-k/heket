@@ -24,6 +24,7 @@ import heket_config
 import heket_common
 
 STORAGE = None
+TESTING = False
 
 if True:
     key = os.getenv("HEKET_CRYPTO_KEY", "")
@@ -174,11 +175,10 @@ def link_challenge_confirm(challenge):
     cur = conn.cursor()
     cur.execute(f"""select * from challenges""")
     rows = cur.fetchall()
-#    print(rows)
 
     cur.execute(f"""select device_id from challenges where challenge = ? and expires > ?""", [challenge, time.time()])
     rows = cur.fetchall()
-    print(rows)
+
     if len(rows) == 1:
         cur.execute(f"""update devices set status = ?, linked = ? where device_id = ? and status = ?""", ["LINKED", datetime.now().isoformat(), rows[0][0], "PENDING"])
         cur.execute(f"""delete from challenges where device_id = ?""", [rows[0][0]])
@@ -322,6 +322,8 @@ def validate_session():
 
 @app.route("/share/inaturalist", methods=["POST"])
 def share_inaturalist():
+    global TESTING
+
     device_id = auth_device()
 
     file = request.files["audio"]
@@ -333,18 +335,20 @@ def share_inaturalist():
 
     provider = "inaturalist"
 
-    dupe, id = share_check_dupe(device_id=device_id, detection_id=detection_id, provider=provider)
+    dupe, id = share_check_dupe(device_id=device_id, record=detection_id, provider=provider)
     if dupe:
         return {"shared": dupe, "id": id}
 
-    ok, response = heket_inaturalist.share_detection(device_id=device_id, species=species,utc_ts=utc_ts,latitude=latitude,longitude=longitude,sound=file)
-    #ok, response = True, {'id': 399699165}
+    if TESTING:
+        ok, response = True, {'id': 399699165}
+    else:
+        ok, response = heket_inaturalist.share_detection(device_id=device_id, species=species,utc_ts=utc_ts,latitude=latitude,longitude=longitude,sound=file)        
 
     resp = {"shared": ok}
     
     if ok:
         resp["id"] = response["id"]
-        share_record(device_id=device_id,detection_id=detection_id,provider=provider,provider_id=resp["id"])
+        share_record(device_id=device_id,record=detection_id,provider=provider,provider_id=resp["id"])
 
     return resp
 
@@ -362,16 +366,20 @@ def share_turtlepond():
     latitude = request.form["latitude"]
     longitude = request.form["longitude"]
     label = request.form["label"]
-    detection_id = int(request.form["detection_id"])
+    record = request.form["record"]
 
     provider = "turtlepond"
 
-    dupe, id = share_check_dupe(device_id=device_id, detection_id=detection_id, provider=provider)
+    dupe, id = share_check_dupe(device_id=device_id, record=record, provider=provider)
+
     if dupe:
         return {"shared": dupe, "id": id}
 
     try:
-        ok, contrib_id = turtlepond_process_share(file=file, filesize=file_size, device_id=device_id, species=species, utc_ts=utc_ts, latitude=latitude,longitude= longitude,label=label,detection_id=detection_id)
+        if TESTING:
+            ok, contrib_id = True, 999
+        else:
+            ok, contrib_id = turtlepond_process_share(file=file, filesize=file_size, device_id=device_id, species=species, utc_ts=utc_ts, latitude=latitude,longitude= longitude,label=label,record=record)
     except Exception as e:
         print(e)
         abort(400)
@@ -380,7 +388,7 @@ def share_turtlepond():
     
     if ok:
         resp["id"] = contrib_id
-        share_record(device_id=device_id,detection_id=detection_id,provider=provider,provider_id=contrib_id)
+        share_record(device_id=device_id,record=record,provider=provider,provider_id=contrib_id)
 
     return resp
 
@@ -390,7 +398,7 @@ def get_contrib_path(file):
 def get_pack_path(file):
     return "packs/" + file
 
-def turtlepond_process_share(file=None, filesize=None, species=None, utc_ts=None, latitude=None, longitude=None,label=None,detection_id=None,device_id=None):
+def turtlepond_process_share(file=None, filesize=None, species=None, utc_ts=None, latitude=None, longitude=None,label=None,record=None,device_id=None):
     audio = extract_audio_parameters(file)
 
     new_file = str(uuid.uuid4())
@@ -398,9 +406,9 @@ def turtlepond_process_share(file=None, filesize=None, species=None, utc_ts=None
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""insert into contrib_clips (audio_sr, audio_ch, audio_frames, audio_duration, audio_format, audio_subtype,
-                species,recorded_ts,latitude,longitude,label,detection_id,device_id,filename,contrib_ts,filesize) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                species,recorded_ts,latitude,longitude,label,record,device_id,filename,contrib_ts,filesize) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [audio["sample_rate"],audio["channels"],audio["frames"],audio["duration"],audio["format"],audio["subtype"],
-                    species,utc_ts,latitude,longitude,label,detection_id,device_id,new_file,turtlepond.dates.get_epoch(),filesize])
+                    species,utc_ts,latitude,longitude,label,record,device_id,new_file,turtlepond.dates.get_epoch(),filesize])
     contrib_id = cur.lastrowid
     conn.commit()
     return True, contrib_id
@@ -419,17 +427,20 @@ def extract_audio_parameters(file):
         "subtype": info.subtype,
     }    
 
-def share_record(device_id=None, detection_id=None, provider=None, provider_id=None):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""insert into share_log (device_id, detection_id, provider, provider_id, share_ts) values (?,?,?,?,?)""", [device_id, detection_id, provider, provider_id, turtlepond.dates.get_epoch()])
-    conn.commit()
-    conn.close()
+def share_record(device_id=None, record=None, provider=None, provider_id=None):
+    global TESTING
 
-def share_check_dupe(device_id=None, detection_id=None, provider=None):
+    if not TESTING:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""insert into share_log (device_id, shared, provider, provider_id, share_ts) values (?,?,?,?,?)""", [device_id, str(record), provider, provider_id, turtlepond.dates.get_epoch()])
+        conn.commit()
+        conn.close()
+
+def share_check_dupe(device_id=None, record=None, provider=None):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("""select provider_id from share_log where device_id = ? and detection_id = ? and provider = ?""", [device_id, detection_id, provider])
+    cur.execute("""select provider_id from share_log where device_id = ? and shared = ? and provider = ?""", [device_id, str(record), provider])
     rows = cur.fetchall()
     if len(rows) == 1:
         print("Dupe check found dupe")
@@ -483,13 +494,6 @@ def clean_challenges():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute(f"""select count(*) from devices""")
-    rows = cur.fetchall()
-    print("Devices:", rows[0][0])
-    cur.execute(f"""select count(*) from challenges""")
-    rows = cur.fetchall()
-    print("Challenges:", rows[0][0])
-
     cur.execute(f"""delete from challenges where expires < ?""", [time.time()])
     cur.execute(f"""delete from devices where status = ? and device_id not in (select device_id from challenges)""", ['PENDING'])
 
@@ -505,17 +509,14 @@ def clean_challenges():
     
 CONN = get_db()
 
-#CONN.cursor().execute("""drop table if exists devices""")
-#CONN.cursor().execute("""drop table if exists challenges""")
+
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS devices (device_id integer primary key autoincrement, device_key_hash text, status text, created text, linked text)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS challenges (challenge_id integer primary key autoincrement, device_id int, challenge text, expires int)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS external_accounts (external_account_id integer primary key autoincrement, device_id int, provider text, provider_user_id text, provider_user_name text, access_token text, connected int)""")
-CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS share_log (share_id integer primary key autoincrement, device_id int, detection_id int, provider text, provider_id text, share_ts int)""")
+CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS share_log (share_id integer primary key autoincrement, device_id int, shared int, provider text, provider_id text, share_ts int)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS contrib_clips(contrib_id integer primary key autoincrement, audio_sr int, audio_ch int, audio_frames int, audio_duration real, audio_format text, audio_subtype text,
-                    species text,recorded_ts int,latitude real,longitude real,label text,detection_id int,device_id int,filename text,contrib_ts int, filesize int, turtlepond_label text)""")
+                    species text,recorded_ts int,latitude real,longitude real,label text,record text,device_id int,filename text,contrib_ts int, filesize int, turtlepond_label text)""")
 CONN.cursor().execute("""CREATE TABLE IF NOT EXISTS clip_packs (pack_id integer primary key autoincrement, label text, audio_sr int, duration real, file text, update_ts int)""")
-#CONN.cursor().execute("""insert into clip_packs (label, audio_sr,duration,file,update_ts) values('test',16000,15,'test.tar',1)""")
-#CONN.cursor().execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_challenge_unq ON challenges(challenge)""")
 CONN.commit()
 CONN.close()
 
