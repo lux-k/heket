@@ -146,7 +146,7 @@ def process_file(path):
             end_sample = start_sample + slice_samples
             audio_slice = y[start_sample:end_sample]
 
-            if len(audio_slice) == 0:
+            if len(audio_slice) == 0 or len(audio_slice) < slice_samples * .5:
                 continue
 
             features = model.extract_features_from_audio(audio_slice, sr)

@@ -398,6 +398,9 @@ class CnnModel(HeketModel):
             "class_counts": dict(Counter(y))
         }
 
+        print(history.history["loss"])
+        print(history.history["accuracy"])
+
         self.meta_data = {"metadata_version": 1, "uuid": str(uuid.uuid4()), "filename": Path(self.file).name, "creation_date": turtlepond.dates.get_epoch(), "sample_rate": self.sample_rate,
                           "slice_duration": self.slice_time, "labels": encoder.classes_.tolist(), "training": training}
         
