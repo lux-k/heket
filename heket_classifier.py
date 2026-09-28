@@ -12,6 +12,7 @@ import re
 import random
 import turtlepond.dates
 from pathlib import Path
+from collections import Counter
 
 def load_model_from_file(file):
     if file.endswith(".pkl"):
@@ -320,7 +321,8 @@ class CnnModel(HeketModel):
         X = []
         y = []
         files = []
-        
+        batch_size = 16
+
         labels = os.listdir(source_path)
 
         # Load dataset
@@ -355,7 +357,7 @@ class CnnModel(HeketModel):
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         # Train
-        model.fit(X, y_encoded, epochs=10, batch_size=16 )
+        history = model.fit(X, y_encoded, epochs=10, batch_size=batch_size )
 
         self.file = os.path.join(heket_config.CUSTOM_MODEL_DIR, "frog_model_cnn_sg_" +  datetime.now().strftime("%Y%m%d_%H%M%S") + ".keras")
         model.save(self.file)
@@ -386,8 +388,18 @@ class CnnModel(HeketModel):
         print(f"Model saved as {self.file}")
         #print(f"Labels saved as {label_file}")    
         print("Classes:", encoder.classes_)
+        training = {"epochs": len(history.history["loss"]),
+            "batch_size": batch_size,
+            "optimizer": model.optimizer.name,
+            "loss_function": model.loss,
+            "training_loss": float(history.history["loss"][-1]),
+            "training_accuracy": float(history.history["accuracy"][-1]),
+            "training_samples": len(X),
+            "class_counts": dict(Counter(y))
+        }
+
         self.meta_data = {"metadata_version": 1, "uuid": str(uuid.uuid4()), "filename": Path(self.file).name, "creation_date": turtlepond.dates.get_epoch(), "sample_rate": self.sample_rate,
-                          "slice_duration": self.slice_time, "labels": encoder.classes_.tolist()}
+                          "slice_duration": self.slice_time, "labels": encoder.classes_.tolist(), "training": training}
         
 class BirdNETModel(HeketModel):
     label_file = ""

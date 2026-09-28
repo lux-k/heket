@@ -1062,8 +1062,8 @@ def share_turtlepond_bulk_thread(label=None, max_count=0):
 
     # this right here is an issue... we want to create the share id 
     cur.execute(f"""select ds.slice_id, ds.detection_id, ds.detection_id || ':' || ds.offset || ':' || ds.duration as record from detection_slices ds left join detection_shares s 
-                    on record = s.shared where ds.duration = ? and ds.labeled= ?
-                     and s.shared is null order by random() limit ?""", [heket_config.SLICE_TIME,label, max_count])
+                    on record = s.shared where ds.duration >= ?  -.1 and ds.duration <= ? + .1 and ds.labeled= ?
+                     and s.shared is null order by random() limit ?""", [heket_config.SLICE_TIME,heket_config.SLICE_TIME,label, max_count])
     rows = cur.fetchall()
     count = 0
 

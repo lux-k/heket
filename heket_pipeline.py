@@ -142,16 +142,20 @@ def process_file(path):
 
         results = []
 
-        for start_sample in range(0, segment_samples, slice_samples):
+        for start_sample in range(0, len(y), slice_samples):
             end_sample = start_sample + slice_samples
             audio_slice = y[start_sample:end_sample]
+
+            if len(audio_slice) == 0:
+                continue
 
             features = model.extract_features_from_audio(audio_slice, sr)
             prediction, confidence = model.predict(features)
 
             results.append({
                 "offset": start_sample / sr,
-                "duration": model.slice_time,
+                "duration": round(librosa.get_duration(y=audio_slice, sr=sr),2), #was model.slice_time but
+                "duration": model.slice_time, 
                 "prediction": prediction,
                 "confidence": confidence
             })
