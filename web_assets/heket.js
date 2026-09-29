@@ -113,6 +113,12 @@ const playhead = document.getElementById("spectrogram-playhead");
 var activeaudio = null;
 var pinnedspectro = false;
 
+document.getElementById('frog-calling-button').addEventListener("click", async function () {
+    const res = await fetch("/review_add", {
+        method: "GET"
+    });
+})
+
 document.getElementById('slice-save-label-button').addEventListener("click", async function () {
 
     const activeSlice = document.querySelector(".spectrogram-slice.active");

@@ -197,7 +197,7 @@ def make_page(title = "Home", content = ""):
         html += " style=\"display: none\">"
     html += "</div>"
         
-    html += "<div class=\"floater\"><form method=\"GET\" action=\"review_add\"><button style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></form></div>"
+    html += "<div class=\"floater\"><button id=\"frog-calling-button\" style=\"height: 60px; background: var(--heket-light-gold); line-height: 1.5;\">&#128056;<br>Frog Calling</button></div>"
     url = url_for("index")
     html +="<div style=\"width: 100%; margin-bottom: 20px; text-align: center;\">"
     html += f"<a href=\"{ url }\"><img src=\"/web_assets/heket_logo_small.png\"></a><div id=\"last-heard\"></div></div><br>"
@@ -457,7 +457,7 @@ def index():
             JOIN class_metadata cmd
                 ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
             WHERE ds.detection_id = d.id
-            AND ds.confidence > ?
+            AND (ds.labeled is not null or ds.confidence > ?)
             AND cmd.target = 1
         )
     """,[heket_config.CONF_STRONG])
@@ -481,7 +481,7 @@ WHERE EXISTS (
     JOIN class_metadata cmd
         ON cmd.label_name = COALESCE(ds.labeled, ds.prediction)
     WHERE ds.detection_id = d.id
-      AND ds.confidence > ?
+      AND (ds.labeled is not null or ds.confidence > ?)
       AND cmd.target = ?
 )
 ORDER BY d.recorded_ts DESC
@@ -939,19 +939,19 @@ def detection_delete( recs ):
 
     to_delete = []
     slices_delete = []
-    for r in recs:
-        cur.execute(f"""select id, file from detections where id = ?""", [r])
+    for detection_id in recs:
+        cur.execute(f"""select id, file from detections where id = ?""", [detection_id])
         rows = cur.fetchall()
         if len(rows) > 0:
             to_delete.append( {"id": rows[0][0], "file": rows[0][1]} )
 
         #clean up slices
-        cur.execute(f"""select d.file, ds.labeled, ds.offset, ds.duration from detections d join detection_slices ds on d.id = ds.detection_id where d.id = ? and ds.labeled is not null""", [r])
+        cur.execute(f"""select d.file, ds.labeled, ds.offset, ds.duration from detections d join detection_slices ds on d.id = ds.detection_id where d.id = ? and ds.labeled is not null""", [detection_id])
         rows = cur.fetchall()
         for r in rows:
             file, path = heket_common.slice_to_filename(label=r[1],file=r[0],duration=r[3],offset=r[2])
             heket_common.delete_file(file)
-            cur.execute(f"""delete from detection_slices where detection_id = ?""", [r])
+            cur.execute(f"""delete from detection_slices where detection_id = ?""", [detection_id])
 
     for d in to_delete:
         #delete the source file
@@ -1208,7 +1208,6 @@ def model_switch(model):
 
 @app.route("/review_add", methods=["GET"])
 def review_add():
-    html = "<h1>Review Noted</h1><ul>&#9989; Thanks for reporting the frog call."
 
     conn = get_db()
     cur = conn.cursor()
@@ -1221,7 +1220,11 @@ def review_add():
     conn.commit()
     conn.close()
     
+    simple_notify(f"Frog call noted. <a href=\"review_process?id={review_id}\">See it</a>.")
+    return {}
+    html = "<h1>Review Noted</h1><ul>&#9989; Thanks for reporting the frog call."
     html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
+
     html += review_event_page(review_id)
     return make_page(title = "Review noted", content = html)
 
@@ -1448,7 +1451,7 @@ def class_review():
         html += f"<li>"
         weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
         html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather = weather, route=request.full_path, slices=detection_get_slices(r[0]),
-                               slice_filter=lambda d: d["labeled"] == review_class)
+                               slice_filter=lambda d: d["labeled"] == review_class or d["prediction"] == review_class)
         html += "</li><br>"
 
     html += "<li style=\"list-style-type: none;\">" + paginate("class_review", "page", page, max_page) + "</li>"
