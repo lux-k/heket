@@ -100,8 +100,11 @@ class ALSAAudioSource(AudioSource):
             #step 1... look at the sound cards in sysfs... grab the names
             match = re.search(r"^card(\d+)$", f)
             if match:
-                result = subprocess.run(['udevadm','info','--query=property','/sys/class/sound/' + f], capture_output=True, text=True)
-                results = {"card_name": f, "card_number": match.group(1)}
+                try:
+                    result = subprocess.run(['udevadm','info','--query=property','/sys/class/sound/' + f], capture_output=True, text=True)
+                    results = {"card_name": f, "card_number": match.group(1)}
+                except:
+                    continue
             else:
                 #print(f, "is not a candidate card")
                 continue
