@@ -25,6 +25,8 @@ import queue
 import turtlepond.dates
 import tarfile
 import re
+import heket_audio_source
+import turtlepond.html
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -32,7 +34,9 @@ ALERTS = []
 ALERTS_CHECKED = 0
 TRAINING = None
 NAME_CACHE = {}
+SOURCE_NAMES = {}
 
+PAM_DEV = None
 SSE_MSG = None
 SSE_COND = threading.Condition()
 LAST_HEARD = None
@@ -88,6 +92,17 @@ def update_labels():
 
     LABEL_CANDS = heket_common.labels_get()
 
+def update_source_names():
+    global SOURCE_NAMES
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("select source_id, name from sources")
+    rows = cur.fetchall()
+    for r in rows:
+        SOURCE_NAMES[r[0]] = r[1]
+
 def update_models():
     global CUSTOM_MODELS
     
@@ -123,6 +138,7 @@ def update_alerts():
         
 update_labels()
 update_models()
+update_source_names()
 print("Labels: ", LABEL_CANDS)
 print("Models: ", CUSTOM_MODELS)
 
@@ -241,7 +257,7 @@ def paginate(url, var, page, max_pages):
     html = "Page "
     if page > 1:
         new_dict[var] = page - 1
-        html += "<a href=\"" + url_for(url, **new_dict) + "\">&#11207;</a> "
+        html += "<a href=\"" + url_for(url, **new_dict) + "\">◀</a> " #&#11207;
         
     html += f"<form style=\"display: inline\" method=\"GET\" action=\"{url_for(url)}\"><input style=\"width: 50px\" name=\"{var}\" value=\"{page}\">"
     for m in new_dict:
@@ -254,7 +270,7 @@ def paginate(url, var, page, max_pages):
 
     if page < max_pages:
         new_dict[var] = page + 1
-        html += "<a href=\"" + url_for(url, **new_dict) + "\">&#11208;</a>"
+        html += "<a href=\"" + url_for(url, **new_dict) + "\">▶</a>" #&#11208;
 
     session[var] = page
 
@@ -295,8 +311,16 @@ def make_label_select(id=""):
         html += f"<option>{label}</option>"
     html += "</select> "
     return html
+
+def source_id_to_name(source_id):
+    global SOURCE_NAMES
+
+    if source_id in SOURCE_NAMES:
+        return SOURCE_NAMES[source_id]
+    else:
+        return str(source_id)
     
-def make_label_form(rec = None, file = None, route = None):
+def make_label_form(rec=None, file=None, route=None, source_id=0):
     found = os.path.isfile(os.path.join(heket_config.OUT_DIR, file))
     html = ""
     if found:
@@ -313,6 +337,7 @@ def make_label_form(rec = None, file = None, route = None):
 #        html += make_label_select()
  #       html += "<button type=\"submit\">Label</button>"
  #       html += "</form>"
+        html += "🎤 " + source_id_to_name(source_id)
     else:
         html += "<br>Recording not found."
     return html
@@ -422,19 +447,20 @@ def make_detection_infoline( id, recorded, file, curated, weather, route=None, s
         html += "<abbr title=\"Included in training\">&#9989;</abbr> "
     return html
 
-def make_detection( id, recorded, file, curated, weather=None, route=None, slices=None, slice_filter=None ):
+def make_detection( id, recorded, file, curated, source_id=0, weather=None, route=None, slices=None, slice_filter=None ):
     html = ""
     if weather is not None and weather["temp_c"] is None:
         weather = None
-    html += make_detection_infoline( id = id, recorded = recorded, file = file, slices=slices, curated=curated, weather = weather, route=route, slice_filter=slice_filter )
+    html += make_detection_infoline(id=id, recorded=recorded, file=file, slices=slices, curated=curated, weather=weather, route=route, slice_filter=slice_filter)
     html += "<div style=\"display:flex; align-items:center; gap:10px; line-height:1;\">"
-    html += make_label_form( rec=id, file=file, route=route )
+    html += make_label_form( rec=id, file=file, route=route, source_id=source_id )
     html += "</div>"
     return html
 
 @app.route("/")
 def index():
-    if len(heket_config.RTSP_URL) == 0:
+    global SOURCE_NAMES
+    if len(SOURCE_NAMES) == 0:
         return redirect(url_for("setup"))
     check_training()
     
@@ -471,10 +497,13 @@ def index():
     w.temp_c,
     w.humidity,
     w.pressure_mb,
-    w.rain_rate_mm
+    w.rain_rate_mm,
+    s.source_id
 FROM detections d
 LEFT JOIN weather w
     ON d.weather_id = w.weather_id
+join sources s
+    on d.source_id = s.source_id
 WHERE EXISTS (
     SELECT 1
     FROM detection_slices ds
@@ -497,7 +526,8 @@ LIMIT ? OFFSET ?""", [heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limi
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], slices=detection_get_slices(r[0]), curated = r[3], weather = weather, slice_filter=lambda d: d["target"] == 1)
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], slices=detection_get_slices(r[0]),
+                                curated = r[3], weather = weather, slice_filter=lambda d: d["target"] == 1, source_id=r[8])
         html += "</li>"
         html += "<br>"
     html += "<li style=\"list-style-type: none;\">" + paginate("index", "fp", frog_page, max_page) + "</li>"
@@ -529,7 +559,7 @@ LIMIT ? OFFSET ?""", [heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limi
                 html += f"<abbr title=\"Delete bout\"><a href=\"bout_delete?id={r[0]}\" style=\"color: red\" onclick=\"return confirm('Delete this bout?')\">&#8998;</a></abbr> "
             html += f"<a href=\"bout_review?bout_id={r[0]}\">{label_to_name(r[1])}</a> "
             if r[3] is None:
-                html += f"since {r[2][:16]}"
+                html += f"since {turtlepond.dates.epoch_to_local(r[2])}"
             else:
                 html += f"from {turtlepond.dates.epoch_to_local(r[2])} until {turtlepond.dates.epoch_to_local(r[3])}"
                 if r[5] is not None and r[6] is not None:
@@ -609,9 +639,11 @@ LIMIT ? OFFSET ?""", [heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limi
     max_page = math.ceil( cur.fetchall()[0][0] / limit )
 
     cur.execute("""SELECT
-        d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb,  w.rain_rate_mm
+        d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb,  w.rain_rate_mm, s.source_id
         FROM detections d LEFT JOIN weather w
         ON d.weather_id = w.weather_id
+        join sources s
+            on d.source_id = s.source_id
         WHERE EXISTS (
             SELECT 1
             FROM detection_slices ds
@@ -625,7 +657,7 @@ LIMIT ? OFFSET ?""", [heket_config.CONF_STRONG, 1, limit, (frog_page - 1) * limi
     for r in rows:
         weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
         html += f"<li>"
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather=weather,
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather=weather, source_id=r[8], 
                                 slices=detection_get_slices(r[0]), slice_filter=lambda d: d["confidence"] >= heket_config.CONF_IFFY_MIN and d["confidence"] <= heket_config.CONF_IFFY_MAX)
         html += "</li>"
         html += "<br>"
@@ -889,7 +921,8 @@ def model_reload():
 def window_datetime( dt ):
     date = turtlepond.dates.isodate_to_epoch(dt)
 
-    return [date - 1 - int(heket_config.SEGMENT_TIME / 2),date + 1 + int(heket_config.SEGMENT_TIME / 2)]
+    #return [date - 1 - int(heket_config.SEGMENT_TIME / 2),date + 1 + int(heket_config.SEGMENT_TIME / 2)]
+    return [date - 1 - 15,date + 1 + int(15)]
 
 @app.route("/detections_delete", methods=["POST"])
 def detections_delete():
@@ -1029,7 +1062,8 @@ def share_turtlepond(detectionId=None,label=None,sliceId=None,detection=None,bul
     provider = "turtlepond"
     with open(file, "rb") as f:
         files = {"audio": f}
-        form_data = {"record": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": species, "label": label}
+        #FIXME
+        form_data = {"record": detectionId, "utc_ts": detection["ts"], "latitude": detection["latitude"], "longitude": detection["longitude"], "species": species, "label": label}
         response = requests.post(heket_config.TURTLEPOND + "share/turtlepond", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
 
     if response.status_code == 200:
@@ -1099,6 +1133,7 @@ def share_inaturalist(detectionId=None,detection=None,label=None):
     provider = "inaturalist"
     with open(file, "rb") as f:
         files = {"audio": f}
+        #FIXME
         form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": species}
         response = requests.post(heket_config.TURTLEPOND + "share/inaturalist", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
 
@@ -1132,7 +1167,9 @@ def detection_get(detectionId):
 
     rec = int(detectionId)
 
-    cur.execute(f"""SELECT detections.id, detections.recorded_ts, file FROM detections WHERE detections.id = ?""",[detectionId])
+    cur.execute(f"""SELECT detections.id, detections.recorded_ts, file, sources.lat, sources.lon FROM detections 
+        join sources on detections.source_id = sources.source_id
+        WHERE detections.id = ?""",[detectionId])
 
     rows = cur.fetchall()
 
@@ -1158,13 +1195,12 @@ def detection_get(detectionId):
         shared.append({"provider": r[0], "name": share_cfg[r[0]]["name"], "id": r[1], "url": share_cfg[r[0]]["url"](r[1])})
 
     if CAPS is not None:
-
         for k in share_cfg.keys():
             if k in CAPS and f"{k}-{str(detectionId)}" not in SHARES_IN_PROGRESS and not any(d.get("provider") == k for d in shared):
                 shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"], "class": share_cfg[k].get("class","")})
 
     result = {"detectionId": detectionId, "labels": labels, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]),
-             "file": rows[0][2], "shareable": shareable, "shared": shared, "slices": slices}
+             "file": rows[0][2], "shareable": shareable, "shared": shared, "slices": slices, "latitude": r[0][3], "longitude": r[0][4]}
 
     return result
 
@@ -1206,6 +1242,25 @@ def model_switch(model):
     signal_pipeline()
     heket_config.reload()
 
+@app.route("/source_ext_capture", methods=["GET"])
+def source_pam_capture():
+    threading.Thread(target=do_ext_dev_capture, daemon=True).start()
+    return {}
+
+def do_ext_dev_capture():
+    ret_val = heket_audio_source.ExternalAudioSource.monitor_udev(timeout=5,fn=heket_audio_source.ExternalAudioSource.grab_parent)
+    ret_val = "/foo/bar/hehe"
+    if ret_val is not None:
+        #sse broadcast
+        sse_publish(topic="ext_device_found",data={"device": ret_val})
+    else:
+        sse_publish(topic="ext_device_not_found")
+
+    print("Done with source thread")
+
+def sse_publish(topic="none",data={}):
+    publish(f"event: {topic}\ndata: {json.dumps(data)}\n\n")
+
 @app.route("/review_add", methods=["GET"])
 def review_add():
 
@@ -1222,11 +1277,6 @@ def review_add():
     
     simple_notify(f"Frog call noted. <a href=\"review_process?id={review_id}\">See it</a>.")
     return {}
-    html = "<h1>Review Noted</h1><ul>&#9989; Thanks for reporting the frog call."
-    html += " The review will start at detection Id " + str(rows[0][0]) + ".</ul>"
-
-    html += review_event_page(review_id)
-    return make_page(title = "Review noted", content = html)
 
 def review_event_page(review_id=0, detection_id=0):
     conn = get_db()
@@ -1234,50 +1284,57 @@ def review_event_page(review_id=0, detection_id=0):
     
     html = f"<h1>Review Event</h1><ul>"
     if review_id != 0:
-        cur.execute("""select detection_id, recorded from reviews where id = ?""", [review_id])
+        cur.execute("""select r.detection_id, r.recorded, d.duration from reviews r join detections d on d.id = r.detection_id where r.id = ?""", [review_id])
         rows = cur.fetchall()
-        detection_id = rows[0][0]
-        html += f"Reported: {rows[0][1]}<br>"
-    
-    high = detection_id + int((2 * 60) / heket_config.SEGMENT_TIME)
-    low = detection_id - int((5 * 60) / heket_config.SEGMENT_TIME)
+        if len(rows) > 0:
+            detection_id = rows[0][0]
+            html += f"Reported: {rows[0][1]}<br>"
 
-    html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
+            high = detection_id + int((2 * 60) / rows[0][2])
+            low = detection_id - int((5 * 60) / rows[0][2])
 
-    cur.execute("""SELECT
-        d.id,
-        d.recorded_ts,
-        d.file,
-        d.curated,
-        w.temp_c,
-        w.humidity,
-        w.pressure_mb,
-        w.rain_rate_mm
-    FROM detections d
-    LEFT JOIN weather w
-        ON d.weather_id = w.weather_id
-    WHERE EXISTS (
-        SELECT 1
-        FROM detection_slices ds
-        WHERE ds.detection_id = d.id
-    )	
-    and d.id >= ? and d.id <= ?
-    ORDER BY d.recorded_ts DESC
-    """, [low, high])
+            html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-    rows = cur.fetchall()
-    for r in rows:
-        html += f"<li>"
-        route = request.full_path
-        #rewrite "frog button" pages to review pages so it doesn't keep creating
-        #events
-        if "review_process" not in route:
-            route = url_for("review_process") + "?id=" + str(review_id)
- 
-        weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2],curated = r[3], weather = weather, route=route, slices=detection_get_slices(r[0]))
-        html += "</li><br>"
+            cur.execute("""SELECT
+                d.id,
+                d.recorded_ts,
+                d.file,
+                d.curated,
+                w.temp_c,
+                w.humidity,
+                w.pressure_mb,
+                w.rain_rate_mm,
+                s.source_id
+            FROM detections d
+            LEFT JOIN weather w
+                ON d.weather_id = w.weather_id
+            join sources s
+                on d.source_id = s.source_id        
+            WHERE EXISTS (
+                SELECT 1
+                FROM detection_slices ds
+                WHERE ds.detection_id = d.id
+            )	
+            and d.id >= ? and d.id <= ?
+            ORDER BY d.recorded_ts DESC
+            """, [low, high])
+
+            rows = cur.fetchall()
+            for r in rows:
+                html += f"<li>"
+                route = request.full_path
+                #rewrite "frog button" pages to review pages so it doesn't keep creating
+                #events
+                if "review_process" not in route:
+                    route = url_for("review_process") + "?id=" + str(review_id)
         
+                weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+                html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2],curated=r[3], source_id=r[8],
+                                        weather = weather, route=route, slices=detection_get_slices(r[0]))
+                html += "</li><br>"
+        else:
+            html += "This review period is invalid.<br><br>"
+
     html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
     html += "</ul>"
     return html
@@ -1390,7 +1447,10 @@ def class_review():
         html += "</form></div></fieldset>"
 
     sql_pages = f"""SELECT count(*) FROM detections d WHERE  EXISTS (SELECT 1  FROM detection_slices ds  WHERE ds.detection_id = d.id and """
-    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id  WHERE EXISTS (SELECT 1
+    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm, s.source_id FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id
+        join sources s
+            on d.source_id = s.source_id
+        WHERE EXISTS (SELECT 1
         FROM detection_slices ds  WHERE ds.detection_id = d.id and """
     
     sql_args = []
@@ -1450,7 +1510,8 @@ def class_review():
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather = weather, route=request.full_path, slices=detection_get_slices(r[0]),
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[3], weather = weather,
+                                route=request.full_path, slices=detection_get_slices(r[0]), source_id=r[8],
                                slice_filter=lambda d: d["labeled"] == review_class or d["prediction"] == review_class)
         html += "</li><br>"
 
@@ -1586,7 +1647,6 @@ def setup():
     html += "<ul><h2>Configuration Values</h2>"
     html += "<form action=\"setup_save\" method=\"POST\">"
     html += "<table><tr><th>Parameter</th><th>Value</th></tr>"
-    html += f"<tr><td>RTSP URL:</td><td><input name=\"RTSP_URL\" size=\"{long_size}\" value=\"{heket_config.RTSP_URL}\"></td></tr>"
     html += f"<tr><td>Model Sophisication:</td><td><select name=\"MODEL_LEVEL\">"
     for h in heket_config.MODEL_TYPES:
         html += "<option"
@@ -1596,12 +1656,12 @@ def setup():
     html += "</select>"
     html += "</td></tr>"
 
+#    html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
+    html += f"<tr><td>Slice Length (s):</td><td><input name=\"SLICE_TIME\" size=\"5\" value=\"{str(heket_config.SLICE_TIME)}\"></td></tr>"
+    html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
     html += f"<tr><td>Confidence Strong:</td><td><input name=\"CONF_STRONG\" size=\"5\" value=\"{heket_config.CONF_STRONG}\"></td></tr>"
     html += f"<tr><td>Iffy Min:</td><td><input name=\"CONF_IFFY_MIN\" size=\"5\" value=\"{heket_config.CONF_IFFY_MIN}\"></td></tr>"
     html += f"<tr><td>Iffy Max:</td><td><input name=\"CONF_IFFY_MAX\" size=\"5\" value=\"{heket_config.CONF_IFFY_MAX}\"></td></tr>"
-    html += f"<tr><td>Sample Rate (hz):</td><td><input name=\"SAMPLE_RATE\" size=\"5\" value=\"{str(heket_config.SAMPLE_RATE)}\"></td></tr>"
-    html += f"<tr><td>Segment Length (s):</td><td><input name=\"SEGMENT_TIME\" size=\"5\" value=\"{str(heket_config.SEGMENT_TIME)}\"></td></tr>"
-    html += f"<tr><td>Slice Length (s):</td><td><input name=\"SLICE_TIME\" size=\"5\" value=\"{str(heket_config.SLICE_TIME)}\"></td></tr>"
     html += f"<tr><td>Weather Provider URL:</td><td><input name=\"WEATHER_PROVIDER\" size=\"{long_size}\" value=\"{str(heket_config.WEATHER_PROVIDER)}\"></td></tr>"
     html += f"<tr><td>Weather Units:</td><td><select name=\"WEATHER_UNITS\">"
     for h in ["imperial","metric"]:
@@ -1614,11 +1674,46 @@ def setup():
     html += f"<tr><td>Notification Provider:</td><td><input name=\"NOTIFICATION_PROVIDER\" size=\"{long_size}\" value=\"{heket_config.NOTIFICATION_PROVIDER}\"></td></tr>"
     html += f"<tr><td>Bout Miniumum Detections:</td><td><input name=\"BOUT_MIN_CLIPS\" size=\"5\" value=\"{heket_config.BOUT_MIN_CLIPS}\"></td></tr>"
     html += f"<tr><td>Bout Maximum Silence (s):</td><td><input name=\"BOUT_MAX_SILENT\" size=\"5\" value=\"{heket_config.BOUT_MAX_SILENT}\"></td></tr>"
-    html += f"<tr><td>Latitude:</td><td><input name=\"LAT\" size=\"15\" value=\"{heket_config.LAT}\"></td></tr>"
-    html += f"<tr><td>Longitude:</td><td><input name=\"LON\" size=\"15\" value=\"{heket_config.LON}\"></td></tr>"
     html += "</table><br>"
     html += "<button type=\"submit\">Save</button>"
     html += "</form><br>"
+
+    html += "<h2>Audio Sources</h2>"
+    options = []
+    divs = ""
+    values = {}
+    errors = {}
+    js = ""
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select source_id, name from sources order by name """)
+    html += "<form method=\"POST\" action=\"update_audio_source\">"
+    html += '<label>Source</label><select id="audio_source_id" name="audio_source_id"><option value="0">&lt; new &gt;</option>'
+    rows = cur.fetchall()
+    for r in rows:
+        html += f"<option value=\"{r[0]}\">{r[1]}</option>"
+
+    html += '</select><br>'
+
+    for key, value in heket_audio_source.types().items():
+        options.append( {"name": value["name"], "value": key} )
+        divs += f"<div id=\"audio_source_{key}_div\">"
+        divs += turtlepond.html.render_fields(heket_audio_source.configuration(key),values,errors,prefix=key +"_") + "</div>"
+        js += f'document.getElementById("audio_source_{key}_div").hidden = type !== "{key}";'
+
+    html += turtlepond.html.render_fields(  {           "audio_source_type": {
+                "type": "select",
+                "label": "Source Type",
+                "required": True,
+                "options": options,
+                "onchange": "switchAudioSourceType();"
+            }},values,errors) + divs
+
+    html += f'<script>function switchAudioSourceType() {{ const type = document.getElementById("audio_source_type").value; {js} }} switchAudioSourceType()</script>'
+
+    html += "<br><button type=\"submit\">Update</button><br><br>"
+    html += "</form>"
 
     html += "<h2>Update</h2>"
     html += "<form action=\"update\" method=\"POST\">"
@@ -1636,7 +1731,6 @@ def setup():
                 res, conf = heket_common.test_key()
             except Exception as e:
                 res = False
-
 
         if heket_config.TURTLEPOND_KEY == None or not res:
             html += "The link has not been established or is broken."
@@ -1656,6 +1750,52 @@ def setup():
 
     return make_page(title = "Setup", content = html)
 
+@app.route("/api/source/<source_id>", methods=["GET"])
+def audio_source_get(source_id):
+    id = int(source_id)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"""select config from sources where source_id = ?""", [id])
+    rows = cur.fetchall()
+    if len(rows) == 1:
+        return json.loads(rows[0][0])
+    else:
+        return {}
+
+@app.route("/update_audio_source", methods=["POST"])
+def audio_source_update():
+    id = int(request.form["audio_source_id"])
+    type = request.form["audio_source_type"] 
+
+    vals = {}
+    vals["type"]= type
+
+    type += "_"
+
+    for v in request.form:
+        if v.startswith(type):
+            vals[v.replace(type,"",1)] = request.form[v]
+
+    if "enabled" in vals and vals["enabled"] == "on":
+        enabled = 1
+    else:
+        enabled = 0
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if id == 0:
+        cur.execute(f"""insert into sources (type, name, lat, lon, config,enabled,updated_ts) values (?,?,?,?,?,?,?)""", [vals["type"], vals["name"], vals["latitude"], vals["longitude"], heket_audio_source.toJson(values=vals), enabled,turtlepond.dates.get_epoch()])
+    else:
+        cur.execute(f"""update sources set type=?,name=?,lat=?,lon=?,config=?,enabled=?,updated_ts=? where source_id=?""", [vals["type"], vals["name"], vals["latitude"], vals["longitude"], heket_audio_source.toJson(values=vals), enabled, turtlepond.dates.get_epoch(), id])
+    conn.commit()
+
+    update_source_names()
+
+    flash("Updated sources")
+    signal_pipeline()
+    return redirect(url_for("setup"))
+
 @app.route("/update", methods=["POST","GET"])
 def update():
     response = requests.get("https://api.github.com/repos/lux-k/heket/tags?per_page=10")
@@ -1673,7 +1813,7 @@ def update():
     html += f"Advertised Heket is at v{new_version:.2f}.<br><br>"
 
     if new_version > heket_config.VERSION:
-        result = subprocess.run(["systemctl", "list-unit-files", "heket-update.service", "--no-legend"], capture_output=True, text=True)
+        result = subprocess.run(["systemctl", "list-unit-files", "heket-update.service"], capture_output=True, text=True)
         match = re.search(r'1 unit files', result.stdout)
         if match:
             html += "<form method=\"POST\" action=\"update_do\"><button type=\"submit\">Update</button></form>"
@@ -1825,37 +1965,31 @@ def turtlepond_manage():
 
 @app.route("/setup_save", methods=["POST"])
 def setup_save():
-    rtsp_url = request.form["RTSP_URL"]
     conf_strong = request.form["CONF_STRONG"]
     iffy_min = request.form["CONF_IFFY_MIN"]
     iffy_max = request.form["CONF_IFFY_MAX"]
     model_level = request.form["MODEL_LEVEL"]
     sample_rate = request.form["SAMPLE_RATE"]
-    segment_len = request.form["SEGMENT_TIME"]
+#    segment_len = request.form["SEGMENT_TIME"]
     slice_len = request.form["SLICE_TIME"]
     weather_prov = request.form["WEATHER_PROVIDER"]
     weather_units = request.form["WEATHER_UNITS"]
     notif_prov = request.form["NOTIFICATION_PROVIDER"]
     bout_clips = request.form["BOUT_MIN_CLIPS"]
     bout_silence = request.form["BOUT_MAX_SILENT"]
-    lat = request.form["LAT"]
-    lon = request.form["LON"]
     
-    heket_config.save_config_value("HEKET_RTSP_URL",rtsp_url)
     heket_config.save_config_value("HEKET_CONF_STRONG",conf_strong)
     heket_config.save_config_value("HEKET_CONF_IFFY_MIN",iffy_min)
     heket_config.save_config_value("HEKET_CONF_IFFY_MAX",iffy_max)
     heket_config.save_config_value("HEKET_MODEL_LEVEL",model_level)
     heket_config.save_config_value("HEKET_SAMPLE_RATE",sample_rate)
-    heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
+#    heket_config.save_config_value("HEKET_SEGMENT_TIME",segment_len)
     heket_config.save_config_value("HEKET_SLICE_TIME",slice_len)
     heket_config.save_config_value("HEKET_WEATHER_PROVIDER",weather_prov)
     heket_config.save_config_value("HEKET_WEATHER_UNITS",weather_units)
     heket_config.save_config_value("HEKET_NOTIFICATION_PROVIDER", notif_prov)
     heket_config.save_config_value("HEKET_BOUT_MIN_CLIPS", bout_clips)
     heket_config.save_config_value("HEKET_BOUT_MAX_SILENT", bout_silence)
-    heket_config.save_config_value("HEKET_LAT", lat)
-    heket_config.save_config_value("HEKET_LON", lon)
     
     signal_pipeline()
     heket_config.reload()
@@ -2020,7 +2154,11 @@ def bout_review():
     html += "</form>"
 
     sql_pages = f"""SELECT count(*) FROM detections d WHERE  EXISTS (SELECT 1  FROM detection_slices ds  WHERE ds.detection_id = d.id and """
-    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id  WHERE EXISTS (SELECT 1
+    sql_query = f"""SELECT d.id, d.recorded_ts, d.file, d.curated, w.temp_c, w.humidity, w.pressure_mb, w.rain_rate_mm, s.source_id
+         FROM detections d LEFT JOIN weather w ON d.weather_id = w.weather_id
+        join sources s
+        on d.source_id = s.source_id
+        WHERE EXISTS (SELECT 1
         FROM detection_slices ds  WHERE ds.detection_id = d.id and """
     
     sql_args = []
@@ -2073,7 +2211,8 @@ def bout_review():
     for r in rows:
         html += f"<li>"
         weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
-        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[6], weather=weather, route=request.full_path, slices=detection_get_slices(r[0]),
+        html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2], curated = r[6], weather=weather, route=request.full_path,
+                                slices=detection_get_slices(r[0]), source_id=r[8],
                                slice_filter=lambda d: d["bout_id"] == bout_id)
         html += "</li><br>"
 

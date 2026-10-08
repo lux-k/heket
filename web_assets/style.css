@@ -205,7 +205,13 @@ hr {
     padding: 4px;
 }
 
-.spectrogram-slice {
+label {
+    display: inline-block;
+    margin-right: 0.4rem;
+    width: 200px;
+  }
+
+ .spectrogram-slice {
     position: absolute;
     top: 0;
     height: 100%;

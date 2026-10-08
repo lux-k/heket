@@ -12,11 +12,13 @@ import shutil
 import sys
 import signal
 from urllib.parse import urlsplit, parse_qs
+from pathlib import Path
 import requests
 import json
 import threading
 from flask import Flask, send_file, send_from_directory, request, redirect, url_for, flash, get_flashed_messages, session, Response
 import math
+import re
 
 # ==== CONFIG ====
 import heket_config
@@ -42,15 +44,15 @@ weather = None
 
 AUDIO_CHECK = 50
 
-# ==== DB SETUP ====
 os.makedirs(heket_config.DATA_DIR, exist_ok=True)
+os.makedirs(heket_config.IN_DIR, exist_ok=True)
+os.makedirs(heket_config.OUT_DIR, exist_ok=True)
+os.makedirs(heket_config.LABELED_DIR, exist_ok=True)
 
 heket_common.db_setup()
 
 conn = heket_common.get_db()
 cur = conn.cursor()
-
-bouts = {}
 
 # ==== LOAD MODEL ====
 model = heket_classifier.load_model_from_file(heket_config.MODEL_FILE)
@@ -69,6 +71,7 @@ def register_model(model):
         return None
 
 MODEL_ID = register_model(model)
+SOURCE_CFGS = {}
 
 def update_weather():
     global weather
@@ -103,6 +106,7 @@ def reload_config():
     global model
     global reload_flag
     global weather
+    global SOURCE_CFGS
 
     print("Reloading config")
     m1 = heket_config.MODEL_FILE
@@ -116,12 +120,51 @@ def reload_config():
     reload_flag = False
     weather = None
     update_weather()
-    
+
+    conn = heket_common.get_db()
+    cur = conn.cursor()
+    #pam is exluded because they're devices created from
+    #external recordings
+    cur.execute("""select source_id, config, updated_ts from sources where enabled = ? and type not in ('pam')""", [1])
+
+    NEW_CFG = {}
+
+    rows = cur.fetchall()
+    if len(rows) == 0:
+        print("No sources found")
+    else:
+        for r in rows:
+            NEW_CFG[r[0]] = json.loads(r[1])
+            NEW_CFG[r[0]]["updated_ts"] = r[2]
+            NEW_CFG[r[0]]["bouts"] = {}
+
+    for s in SOURCE_CFGS:
+        if s not in NEW_CFG:
+            #this cfg was removed or disabled
+            if SOURCE_CFGS[s].get("subprocess", None) is not None:
+                #and it's running...
+                print("Terminate acq source", s)
+                heket_common.kill_proc( SOURCE_CFGS[s]["subprocess"] )
+        else:
+            #it's in both... 
+            #copy the process info
+            NEW_CFG[s]["subprocess"] = SOURCE_CFGS[s]["subprocess"]
+            NEW_CFG[s]["bouts"] = SOURCE_CFGS[s]["bouts"]
+            if SOURCE_CFGS[s]["updated_ts"] != NEW_CFG[s]["updated_ts"]:
+                #but an update occurred... terminate it.
+                print("Terminate acq source", s)
+                heket_common.kill_proc( SOURCE_CFGS[s]["subprocess"] )
+
+    #overwrite the cfgs
+    SOURCE_CFGS = NEW_CFG
+
+    #newly added or updated cfgs will be auto-started
+
 reload_config()
 
 def load_audio(file):
     global AUDIO_CHECK
-    y, sr = librosa.load(file, sr=heket_config.SAMPLE_RATE)
+    y, sr = librosa.load(file, sr=model.sample_rate)
     AUDIO_CHECK += 1
     if AUDIO_CHECK >= 50:
         if np.mean(np.abs(y)) < 0.001:
@@ -129,6 +172,20 @@ def load_audio(file):
         AUDIO_CHECK = 0
 
     return y, sr
+
+def ts_from_string(date):
+    return datetime.strptime(date, heket_config.FILE_FORMAT).replace(tzinfo=turtlepond.dates.HOST_TZ)
+
+def process_file_name(path):
+    p = Path(path)
+    name = p.stem
+    match = re.search(r"^(\d+)_", name)
+    if match:
+        source_id = match.group(1)
+    print(name)
+    name = name.replace(match.group(0),"",1)
+
+    return int(source_id), ts_from_string(name + p.suffix)
 
 def process_file(path):
     global weather
@@ -138,7 +195,6 @@ def process_file(path):
         y, sr = load_audio(path)
 
         slice_samples = round(model.slice_time * sr)
-        segment_samples = round(heket_config.SEGMENT_TIME * sr)
 
         results = []
 
@@ -170,17 +226,17 @@ def process_file(path):
             if weather is not None:
                 weather_id = weather["id"]
 
+            source_id, ts = process_file_name(path)
             #cur.execute("""INSERT INTO detections (recorded, processed, species, confidence, file, weather_id, bout_id) VALUES (?, ?, ?, ?, ?, ?,?)""", [ts_from_filename(path).isoformat(), datetime.now().isoformat(), species, confidence, os.path.basename(path), weather_id, bout_id])
-            cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, duration, sample_rate, model_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                         [turtlepond.dates.datetime_to_epoch(ts_from_filename(path)), turtlepond.dates.get_epoch(), prediction, confidence, os.path.basename(path), weather_id, round(librosa.get_duration(y=y, sr=sr),2), sr, MODEL_ID])
-
+            cur.execute("""INSERT INTO detections (recorded_ts, processed_ts, species, confidence, file, weather_id, duration, sample_rate, model_id, source_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?)""",
+                         [turtlepond.dates.datetime_to_epoch(ts), turtlepond.dates.get_epoch(), prediction, confidence, os.path.basename(path), weather_id, round(librosa.get_duration(y=y, sr=sr),2), sr, MODEL_ID, source_id])
             detection_id = cur.lastrowid
-            bout_id = bout_get(label=prediction,detection_id=detection_id)
 
             for res in results:
+                bout_id = bout_get(source_id=source_id,label=prediction,detection_id=detection_id)
                 cur.execute("""INSERT INTO detection_slices (detection_id, offset, duration, prediction, confidence, bout_id) VALUES (?, ?, ?, ?, ?,?)""",
-                            [detection_id, res["offset"], res["duration"], res["prediction"], res["confidence"], bout_id])                
-                bout_notate(label=res["prediction"],confidence=res["confidence"],detection_id=detection_id)
+                            [detection_id, res["offset"], res["duration"], res["prediction"], res["confidence"], bout_id])
+                bout_notate(source_id=source_id, label=res["prediction"],confidence=res["confidence"],detection_id=detection_id)
 
             conn.commit()
 
@@ -188,8 +244,6 @@ def process_file(path):
 #            notify_web(topic="notification", data={"message": "This is a test message"})
             
             heket_common.move_file(path, os.path.join(heket_config.OUT_DIR, os.path.basename(path)))
-        else:
-           heket_common.delete_file(path)
 
         print(f"{path} | {prediction} ({confidence:.2f})")
 
@@ -208,8 +262,13 @@ def cache_targets():
 
     return results
 
-def bout_get(label, detection_id):
-    global bouts
+def bout_get(source_id, label, detection_id):
+    global SOURCE_CFGS
+
+    if source_id not in SOURCE_CFGS:
+        return None
+
+    bouts = SOURCE_CFGS[source_id]["bouts"]
     global TARGET_LABELS
 
     if not label in TARGET_LABELS:
@@ -218,22 +277,23 @@ def bout_get(label, detection_id):
     else:
         # its a frog.. see if a bout exists
         # close if necessary
-        bout_close(label)
+        bout_close(source_id, label)
             
         if label in bouts:
-            bout_increment(label, detection_id)
+            bout_increment(source_id, label, detection_id)
             return bouts[label]["bout_id"] #may be none or a number
         else:
             #new bout completely
             #bouts[species] = {"start_id": None, "start_time": datetime.now().isoformat(), "detections": 0, "last_time": time.time(), "bout_id": None, "end_time": datetime.now().isoformat(), "conf_min": None, "conf_max": None, "conf_total": 0}
             bouts[label] = {"start_id": None, "start_time": turtlepond.dates.get_epoch(), "detections": 0, "last_time": time.time(), "bout_id": None,
                                "end_time": turtlepond.dates.get_epoch(), "conf_min": None, "conf_max": None, "conf_total": 0, "last_id": 0, "clips": 0}
-            bout_increment(label, detection_id)
+            bout_increment(source_id, label, detection_id)
         
         return bouts[label]["bout_id"]
 
-def bout_increment(label, detection_id):
-    global bouts
+def bout_increment(source_id, label, detection_id):
+    global SOURCE_CFGS
+    bouts = SOURCE_CFGS[source_id]["bouts"]
 
     if label in bouts: #don't have to check the time because it would've been closed already
         #if bouts[label]["
@@ -241,7 +301,7 @@ def bout_increment(label, detection_id):
             bouts[label]["last_id"] = detection_id
             bouts[label]["detections"] += 1
             if bouts[label]["bout_id"] is None and bouts[label]["detections"] >= heket_config.BOUT_MIN_CLIPS:
-                bout_open(label)
+                bout_open(source_id,label)
 
 def bout_notify(msg):
     if heket_config.NOTIFICATION_PROVIDER is not None and len(heket_config.NOTIFICATION_PROVIDER) > 0:
@@ -257,16 +317,17 @@ def bout_notify(msg):
             except Exception as e:
                 print("posting to pushover failed - " + str(e))
     
-def bout_open(label):
-    global bouts
+def bout_open(source_id, label):
+    global SOURCE_CFGS
+    bouts = SOURCE_CFGS[source_id]["bouts"]
+
     print(label, "calling bout has begun")
     bout_notify("🐸 " + label + " calling bout started")
     cur.execute("""INSERT INTO bouts (label, start_detection_id, start_ts) values (?,?,?)""", [label, bouts[label]["start_id"], bouts[label]["start_time"]])
     bouts[label]["bout_id"] = cur.lastrowid
     
     #back fill the first couple detections that had an empty bout id
-    cur.execute("""update detection_slices set bout_id = ? where prediction = ? and id >= ? and id <= ? and bout_id is null""", [bouts[label]["bout_id"], label, bouts[label]["start_id"], bouts[label]["last_id"]])
-    
+    cur.execute("""update detection_slices set bout_id = ? where prediction = ? and detection_id >= ? and detection_id <= ? and bout_id is null""", [bouts[label]["bout_id"], label, bouts[label]["start_id"], bouts[label]["last_id"]])
     conn.commit()
 
 def bout_clean_orphan():
@@ -277,18 +338,19 @@ def bout_clean_orphan():
     count = 0
     for row in rows:
         #we have the bout_id of a dangling bout now
-        cur.execute("""select max(d.id), max(d.recorded_ts), min(ds.confidence), max(ds.confidence), avg(ds.confidence), count(distinct d.id), ds.bout_id from 
-            detections d join detection_slices ds where ds.bout_id = ?""", [ row[0] ])
+        cur.execute("""select max(d.id), max(d.recorded_ts), min(ds.confidence), max(ds.confidence), avg(ds.confidence), count(distinct d.id), ds.bout_id, d.source_id from 
+            detections d join detection_slices ds on d.id = ds.detection_id where ds.bout_id = ?""", [ row[0], row[1] ])
         vals = cur.fetchall()
         if len(vals) > 0:
-            cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ?""", vals[0])
+            cur.execute("""update bouts set end_detection_id = ?, end_ts = ?, conf_min = ?, conf_max = ?, conf_avg = ?, clips = ? where bout_id = ? and source_id = ?""", vals[0])
             count += 1
     
     conn.commit()
     print("Cleaned up", count, "dangling bouts")
     
-def bout_close(label, force=False):
-    global bouts
+def bout_close(source_id, label, force=False):
+    global SOURCE_CFGS
+    bouts = SOURCE_CFGS[source_id]["bouts"]
     
     # if its in there AND it has gone silent...
     if label in bouts and (force or (bouts[label]["last_time"] + heket_config.BOUT_MAX_SILENT) <= time.time()):
@@ -302,8 +364,13 @@ def bout_close(label, force=False):
         #regardless zero out the old bout
         del bouts[label]
 
-def bout_notate(label, confidence, detection_id):
-    global bouts
+def bout_notate(source_id, label, confidence, detection_id):
+    global SOURCE_CFGS
+
+    if source_id not in SOURCE_CFGS:
+        return
+    
+    bouts = SOURCE_CFGS[source_id]["bouts"]
     
     if label in bouts:
         if bouts[label]["start_id"] is None:
@@ -342,40 +409,12 @@ def soundscape_update(label,confidence):
 
         os.replace(tmp, dest)    
 
-def ts_from_filename(path):
-    fname = os.path.basename(path)
-
-    return datetime.strptime(fname, heket_config.FILE_FORMAT).replace(tzinfo=turtlepond.dates.HOST_TZ)
-
-# ==== START FFMPEG ====
-def start_ffmpeg():
-    os.makedirs(heket_config.IN_DIR, exist_ok=True)
-    os.makedirs(heket_config.OUT_DIR, exist_ok=True)
-    os.makedirs(heket_config.LABELED_DIR, exist_ok=True)
-
-    if len(heket_config.RTSP_URL) == 0:
-        return None
-
-    return subprocess.Popen([
-        "ffmpeg", "-nostats",
-        "-rtsp_transport", "tcp",
-        "-i", heket_config.RTSP_URL,
-        "-vn",
-        "-acodec", "pcm_s16le",
-        "-ar", str(heket_config.SAMPLE_RATE),
-        "-f", "segment",
-        "-segment_time", str(heket_config.SEGMENT_TIME),
-        "-reset_timestamps", "1",
-		"-strftime", "1", os.path.join(heket_config.IN_DIR, heket_config.FILE_FORMAT)
-    ])
-
 def start_web():
     return subprocess.Popen([
         "gunicorn"
     ])
 
 def do_maintenance():
-    global bouts
     print("Time to do maintenance")
     cutoff = datetime.now() - timedelta(days = 3)
     search = int(cutoff.timestamp())
@@ -418,21 +457,36 @@ def do_maintenance():
             cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
             conn.commit()
 
-        for label in list(bouts):
-            bout_close(label=label)
+        for source in SOURCE_CFGS:
+            for label in list(SOURCE_CFGS[source]["bouts"]):
+                bout_close(source_id=source,label=label)
+
+def start_acquisition(source):
+    global SOURCE_CFGS
+
+    if SOURCE_CFGS[source].get("subprocess", None) is None:
+        SOURCE_CFGS[source]["subprocess"] = subprocess.Popen([
+                sys.executable, "heket_acquire.py", str(source),
+            ])
+
 # ==== MAIN LOOP ====
 def main():
     global reload_flag
     global weather
-    sleep_time = 8
+    global SOURCE_CFGS
+    global model
+    sleep_time = int(model.slice_time)
     maintenance_offset = 3600
     maintenance_time = 0
     last_file = time.time()
     quiet_seconds = 20
     bout_clean_orphan()
-    while True:
-        print("Starting ffmpeg...")
-        ffmpeg = start_ffmpeg()
+    loop = True
+    while loop:
+        print("Starting acquisition...")
+        for source in SOURCE_CFGS:
+            start_acquisition(source)
+
         print("Starting web...")
         web = start_web()
 
@@ -440,11 +494,12 @@ def main():
             while True:
                 if weather is not None and time.time() > weather["update_after"]:
                     update_weather()
-                files = sorted(os.listdir(heket_config.IN_DIR))
+                #files = sorted(os.listdir(heket_config.IN_DIR))
+                files = [f for f in os.listdir(heket_config.IN_DIR) if os.path.isfile(os.path.join(heket_config.IN_DIR, f))]
 
                 for f in files:
                     path = os.path.join(heket_config.IN_DIR, f)
-
+                    
                     # skip newest file (still being written)
                     if f == files[-1]:
                         continue
@@ -452,34 +507,15 @@ def main():
                     process_file(path)
                     last_file = time.time()
 
-                # ffmpeg checks
-                # first.. unconfigured
-                if ffmpeg is None:
-                    print("No RTSP source is configured.")
-                    heket_config.save_alert("⚠️ No audio source configured")
-                    ffmpeg = start_ffmpeg()
-                # or if it died
-                elif ffmpeg.poll() is not None:
-                    print("ffmpeg died, restarting...")
-                    heket_config.save_alert("⚠️ Audio recording process died")
-                    ffmpeg = start_ffmpeg()
-
-                # or if it's hung
-                if time.time() > (last_file + quiet_seconds):
-                    if ffmpeg is not None:
-                        heket_config.save_alert("⚠️ No new audio files for 1 minute; restarting audio capture")
-                        ffmpeg.terminate()
-
-                        try:
-                            ffmpeg.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            print("ffmpeg would not terminate cleanly; killing...")
-                            ffmpeg.kill()
-                            ffmpeg.wait()
-                        
-                        # reset the time to allow 
-                        last_file = time.time()
-
+                for source in SOURCE_CFGS:
+                    if SOURCE_CFGS[source].get("subprocess", None) is None:
+                        print("No source is configured for id", source)
+                        heket_config.save_alert("⚠️ No audio source configured for" + str(source))
+                        start_acquisition(source)
+                    elif SOURCE_CFGS[source]["subprocess"].poll() is not None:
+                        print("ffmpeg died, restarting...")
+                        heket_config.save_alert("⚠️ Audio recording process died for source" + str(source))
+                        start_acquisition(source)
 
                 # check if web died
                 if web.poll() is not None:
@@ -488,14 +524,7 @@ def main():
                     web = start_web()
 
                 if reload_flag:
-                    rtsp_url = heket_config.RTSP_URL
-                    
                     reload_config()
-                    
-                    #if the rtsp stream changed, kill ffmpeg.. let loop restart it
-                    if heket_config.RTSP_URL != rtsp_url:
-                        if ffmpeg is not None:
-                            ffmpeg.terminate()
 
                 if time.time() > maintenance_time:
                     do_maintenance()
@@ -507,14 +536,16 @@ def main():
         finally:
             print("Stopping...")
 
-            #close any bouts before exiting
-            for label in list(bouts):
-                bout_close(label=label,force=True)
+            for source in SOURCE_CFGS:
+                for label in list(SOURCE_CFGS[source]["bouts"]):
+                    bout_close(source_id=source,label=label,force=True)
 
-            if ffmpeg is not None:
-                ffmpeg.terminate()
-            web.terminate()
-            break
+                if SOURCE_CFGS[source].get("subprocess", None) is not None:
+                    heket_common.kill_proc( SOURCE_CFGS[source]["subprocess"] )
+
+            heket_common.kill_proc(web)
+
+            loop = False
 
 TARGET_LABELS = cache_targets()
 

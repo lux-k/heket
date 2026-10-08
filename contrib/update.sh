@@ -36,5 +36,10 @@ git fetch \
 
 git checkout "$LATEST"
 
+/opt/heket-env/bin/pip install -r requirements.txt
+
+echo "Performing privileged system migration tasks..."
+/opt/heket/migration/system.sh $CURRENT $LATEST
+
 echo "Heket updated to $LATEST"
 systemctl restart heket.service

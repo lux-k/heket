@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv, set_key, unset_key
 
-VERSION = 0.25
+VERSION = 0.26
 
 load_dotenv()
 
@@ -22,10 +22,9 @@ LAST_MIGRATED_VERSION = None
 
 # these runtime values are reloadable
 MODEL_FILE = None
-RTSP_URL = None
 MODEL_LEVEL = None
 SAMPLE_RATE = 0
-SEGMENT_TIME = 0.0
+#SEGMENT_TIME = 0.0
 SLICE_TIME = 0.0
 
 CONF_STRONG = None
@@ -38,9 +37,6 @@ NOTIFICATION_PROVIDER = None
 
 BOUT_MIN_CLIPS = None
 BOUT_MAX_SILENT = None
-
-LAT = None
-LON = None
 
 # the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
@@ -67,10 +63,9 @@ GITHUB_REPO = "https://github.com/lux-k/heket"
 def reload():
     global CONFIG_FILE
     global MODEL_FILE
-    global RTSP_URL
     global MODEL_LEVEL
     global SAMPLE_RATE
-    global SEGMENT_TIME
+#    global SEGMENT_TIME
     global SLICE_TIME
 
     global CONF_STRONG
@@ -82,9 +77,6 @@ def reload():
     global BOUT_MIN_CLIPS
     global BOUT_MAX_SILENT
 
-    global LAT
-    global LON
-    
     global TURTLEPOND_KEY
     global TURTLEPOND
     global LAST_MIGRATED_VERSION
@@ -93,11 +85,10 @@ def reload():
 
     LAST_MIGRATED_VERSION = float(os.getenv("HEKET_LAST_VERSION", 0.00))
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", "")
-    RTSP_URL = os.getenv("HEKET_RTSP_URL", "")
     MODEL_LEVEL = os.getenv("HEKET_MODEL_LEVEL", "cnn_sg")
     SAMPLE_RATE = int(os.getenv("HEKET_SAMPLE_RATE", 16000))
-    SEGMENT_TIME = float(os.getenv("HEKET_SEGMENT_TIME", 15))
-    SLICE_TIME = float(os.getenv("HEKET_SLICE_TIME", SEGMENT_TIME))
+ #   SEGMENT_TIME = float(os.getenv("HEKET_SEGMENT_TIME", 15))
+    SLICE_TIME = float(os.getenv("HEKET_SLICE_TIME", 15))
 
     CONF_STRONG = float(os.getenv("HEKET_CONF_STRONG", 0.3))
     CONF_IFFY_MIN = float(os.getenv("HEKET_CONF_IFFY_MIN", 0.4))
@@ -108,9 +99,6 @@ def reload():
 
     BOUT_MIN_CLIPS = int(os.getenv("HEKET_BOUT_MIN_CLIPS", 10))
     BOUT_MAX_SILENT = int(os.getenv("HEKET_BOUT_MAX_SILENT", 600))
-
-    LAT = float(os.getenv("HEKET_LAT", 38))
-    LON = float(os.getenv("HEKET_LON", 77))
 
     NOTIFICATION_PROVIDER = os.getenv("HEKET_NOTIFICATION_PROVIDER", "")
     
@@ -127,7 +115,6 @@ print(f"   Model: {MODEL_FILE}")
 print(f"ModelLvl: {MODEL_LEVEL}")
 print()
 print("Recordings:")
-print(f"   RTSP: {RTSP_URL}")
 print(f" Format: {FILE_FORMAT}")
 print(f"     In: {IN_DIR}")
 print(f"    Out: {OUT_DIR}")
@@ -143,6 +130,13 @@ def save_config_value(name, value):
     cf.touch(exist_ok=True)
 
     set_key(dotenv_path=cf, key_to_set=name, value_to_set=value)
+
+def delete_config_value(name):
+    global CONFIG_FILE
+    cf = Path(CONFIG_FILE)
+    cf.touch(exist_ok=True)
+
+    unset_key(cf,name)
 
 def save_alert(msg = ""):
     global ALERT_FILE

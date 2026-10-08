@@ -62,7 +62,8 @@ def db_setup():
         bout_id integer,
         duration real,
         sample_rate integer,
-        model_id integer
+        model_id integer,
+        source_id integer
     )
     """)
 
@@ -138,6 +139,31 @@ def db_setup():
         added_ts int
     )
     """)
+
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS sources (
+        source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type text,
+        name text,
+        enabled int,
+        lat real,
+        lon real,
+        config text,
+        updated_ts int
+    )
+    """)
+
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS pam_imports (
+        pam_import_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        serial text,
+        file_ts int,
+        import_ts int,
+        ext_id int,
+        pam_id int
+    )
+    """)
+
 
     CONN.commit()
     CONN.close()
@@ -216,3 +242,13 @@ def slice_to_filename(label=None, file=None, duration=None, offset=None):
 
 def labels_get():
     return sorted([p.name for p in Path(heket_config.LABELED_DIR).iterdir() if p.is_dir()])
+
+def kill_proc(proc):
+    if proc and proc.poll() is None:
+        proc.terminate()
+
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait() 

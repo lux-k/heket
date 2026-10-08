@@ -1,5 +1,88 @@
 var detectionChanged = false;
 
+async function update_ext_source () {
+    const sourceId = this.value;
+
+    if (!sourceId)
+        return;
+    
+    if (sourceId === "0") {
+        const selectElement = document.getElementById('audio_source_type');
+        const allValues = Array.from(selectElement.options).map(opt => opt.value);
+        allValues.forEach((div) => {
+            clearDivFormElements("audio_source_" + div + "_div");
+        });
+
+        if (document.getElementById("ext_device").value === "")
+            document.getElementById("ext_capture_button").textContent = "Capture";
+
+    } else {
+        const response = await fetch(`/api/source/${sourceId}`);
+        const data = await response.json();
+        console.log(data);
+        var prefix = data.type + "_"
+        document.getElementById("audio_source_type").value = data.type;
+        switchAudioSourceType();
+
+        for (const [key, value] of Object.entries(data)) {
+            console.log(`Field: ${key} | Value: ${value}`);
+            var elem = document.getElementById(prefix + key);
+            console.log(prefix + key);
+            if (elem != null) {
+                elem.value = value ?? "";
+                if (elem.type === 'checkbox' && value.length > 0)
+                    elem.checked = true;
+            }
+        }
+
+        if (document.getElementById("ext_device").value !== "")
+            document.getElementById("ext_capture_button").textContent = "Captured ✓";
+    }
+}
+
+if (document.getElementById("audio_source_id"))
+    document.getElementById("audio_source_id").addEventListener("change", update_ext_source);
+
+function clearDivFormElements(divId) {
+  const container = document.getElementById(divId);
+  if (!container) return;
+
+  // 1. Clear all inputs (text, password, date, file, etc.)
+  const inputs = container.querySelectorAll('input');
+  inputs.forEach(input => {
+    switch (input.type) {
+      case 'checkbox':
+      case 'radio':
+        input.checked = false;
+        break;
+      default:
+        input.value = '';
+        break;
+    }
+  });
+
+  // 2. Clear all textareas
+  const textareas = container.querySelectorAll('textarea');
+  textareas.forEach(textarea => textarea.value = '');
+
+  // 3. Reset all dropdown selects
+  const selects = container.querySelectorAll('select');
+  selects.forEach(select => select.selectedIndex = 0); // Resets to the first option
+}
+
+function start_ext_capture() {
+    const button = document.getElementById('ext_capture_button');
+    const waiting = "Waiting for card..."
+    if (!button)
+        return;
+
+    if (button.textContent !== waiting) {
+        alert("Heket will automatically determine the relevant storage device for this source.\n\nLocate the device you wish to use. Click OK below and then plug it in to Heket within 30 seconds.");
+        button.textContent = waiting;
+        const res = fetch("/source_ext_capture");
+    }
+}
+
 async function showShareDialog(detectionId) {
 //    document.getElementById("attachment_observation_id").value = observationId;
 //    document.getElementById("attachment_observation_text").innerHTML = new Date(document.getElementById(observationId + "_ts").value).toLocaleString() + "<br>" + document.getElementById(observationId + "_blurb").innerHTML
@@ -351,6 +434,30 @@ evt.addEventListener('soundscape', (event) => {
     try {
         var data = JSON.parse(event.data);
         updateSoundscapeHTML(data);
+    } catch (err) {
+        console.log(err);
+    }
+});
+
+evt.addEventListener('ext_device_found', (event) => {
+    try {
+        var data = JSON.parse(event.data);
+        const d = document.getElementById('ext_device')
+        if (d) {
+            d.value = data.device;
+            document.getElementById('ext_capture_button').textContent = "Captured ✓";
+        }
+    } catch (err) {
+        console.log(err);
+    }
+});
+
+evt.addEventListener('ext_device_not_found', (event) => {
+    try {
+        const d = document.getElementById('ext_capture_button')
+        if (d) {
+            d.textContent = "Capture";
+        }
     } catch (err) {
         console.log(err);
     }

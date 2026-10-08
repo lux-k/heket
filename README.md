@@ -2,9 +2,11 @@
 
 ![Heket log](web_assets/heket_logo_small.png)
 
-Heket is a locally adaptive acoustic observation system for frogs and toads.
+Heket is a local-first platform for acoustic observation, monitoring, and research workflows.
 
-Heket listens continuously to an audio source, detects potential frog and toad calls, preserves the evidence, and lets you review what it heard. Corrections you make can be used to retrain the local model, allowing each Heket installation to become better adapted to its own species, microphone, and acoustic environment.
+Built first for frogs and toads, Heket can acquire or ingest recordings from multiple audio sources, classify sounds of interest, preserve the original evidence and provenance, and support human review and local model training.
+
+Corrections you make can be used to retrain the local model, allowing each Heket installation to become better adapted to its own species, microphone, and acoustic environment.
 
 A new Heket can bootstrap its first model using community-contributed clip packs from TurtlePond.us. As you review and label recordings from your own site, local examples progressively replace that borrowed knowledge.
 
@@ -16,16 +18,24 @@ This part of the [Turtle Pond](https://turtlepond.us) suite.
 
 ---
 
+## Please note
+
+Heket is under active development and has so far primarily been tested by its developer. Early users should expect rough edges, particularly around hardware and deployment environments. If something doesn't work, please report it—that experience is valuable in making Heket work outside its original environment.
+
+---
+
 ## What it does
 
-- Listens continuously to RTSP audio sources such as security cameras
-- Detects and classifies candidate frog and toad calls
-- Preserves audio evidence for review
-- Lets you correct classifications and add your own labels
-- Retrains models using recordings from your own site
-- Bootstraps new installations using community clip packs
-- Contributes selected labeled recordings back to TurtlePond.us
-- Shares selected observations and audio with iNaturalist
+-Acquires audio from multiple configured sources
+-Supports live network audio and directly attached microphones
+-Ingests recordings from external field storage
+-Detects and classifies sounds of interest
+-Preserves original audio, source provenance, and detection metadata
+-Groups related detections into calling bouts
+-Supports human review, correction, and labeling
+-Retrains local models using reviewed recordings
+-Bootstraps models using TurtlePond.us community clip packs
+-Optionally contributes selected recordings or publishes observations externally (such as iNaturalist)
 
 Heket is designed around a simple loop:
 
@@ -41,7 +51,11 @@ Heket is designed around a simple loop:
 
 ## Before you start
 
-You will need: a machine capable of running Heket, an RTSP audio source, and—if you want to bootstrap from community clips—an Internet connection.
+You will need a machine capable of running Heket and at least one source of acoustic recordings. Heket can work with live audio sources or recordings collected externally. An Internet connection is required only for optional network services such as obtaining community clip packs or sharing observations.
+
+-RTSP — network audio streams
+-ALSA — directly attached audio devices
+-External Storage — recordings imported from field storage/PAM devices (tested against Wild Acoustics Song Meter Micro 2)
 
 Heket does **not** ship with a pretrained model. Your first model is built during setup from the clip packs you choose.
 
@@ -83,7 +97,18 @@ If running Heket on a VM (either via Docker or directly on the VM),  the CPU typ
 
 ## Installation
 
-### Using Docker Compose (easiest)
+### With our install script (tested on a Pi)
+
+Enter these two commands on the Pi's terminal.
+
+```
+curl -fsSL https://raw.githubusercontent.com/lux-k/heket/refs/heads/main/contrib/install.sh -o /tmp/heket-install.sh
+sudo bash /tmp/heket-install.sh
+```
+
+You should verify the contents of the script before running it.
+
+### Using Docker Compose (easiest for RTSP only)
 
 Go to where you keep your Docker files, e.g. /opt
 
@@ -111,7 +136,7 @@ services:
 
 Bring up the new container, e.g. ```docker compose up -d```
 
-You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll configure your audio source.
 
 ### Building your own container
 
@@ -139,18 +164,7 @@ Add this stanza to your docker-compose.yml:
 
 Build and run the container, e.g. ```docker compose up heket --build ```
 
-You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your RTSP source.
-
-## With our install script (tested on a Pi)
-
-Enter these two commands on the Pi's terminal.
-
-```
-curl -fsSL https://raw.githubusercontent.com/lux-k/heket/refs/heads/main/contrib/install.sh -o /tmp/heket-install.sh
-sudo bash /tmp/heket-install.sh
-```
-
-You should verify the contents of the script before running it.
+You should then be able to connect to the machine's IP on port 5000, e.g. http://192.168.100.10:5000. When you connect for the first time, you'll be asked for your audio source.
 
 ## venv / non-Docker setup
 
@@ -175,9 +189,15 @@ You should then be able to connect to the machine's IP on port 5000, e.g. http:/
 
 Navigate to the Heket website, for example http://192.168.100.10:5000. A new installation should automatically direct you to the setup page.
 
-Enter the RTSP URL for your camera or audio source, for example: rtsp://username:password@camera_hostname:554/h264Preview_01_sub
+Fill out the values in the Configuration Values section. Weather and notification providers are not required.
 
 Click **Save**.
+
+On the setup page, locate the Audio Sources section and setup your audio source(s). A minimum recommended sample rate is 16000 and segment length is 15.
+
+RTSP URLs are formatted like this: rtsp://username:password@camera_hostname:554/h264Preview_01_sub Refer to your vendor's documentation for the exact path.
+
+Click **Update**.
 
 Heket now knows where to obtain audio, but a new installation does not include a prebuilt model. Before Heket can identify what it hears, you'll need to build its initial model.
 
@@ -230,7 +250,7 @@ Event windows protect recordings from being deleted until the event itself is de
 
 The initial model built during Quickstart is a starting point, not a finished classifier. Community clip packs contain recordings from other environments and equipment.
 
-As Heket begins listening, review its detections. Correct classifications that are wrong and label useful recordings that Heket didn't understand correctly. Non-frog examples are important too: wind, insects, birds, traffic, machinery, and other sounds can all help Heket learn what not to classify as a frog.
+As Heket begins processing recordings, review its detections. Correct classifications that are wrong and label useful recordings that Heket didn't understand correctly. Non-frog examples are important too: wind, insects, birds, traffic, machinery, and other sounds can all help Heket learn what not to classify as a frog.
 
 Non-frog labels should begin with nonfrog_, for example nonfrog_wind or nonfrog_ambient.
 
