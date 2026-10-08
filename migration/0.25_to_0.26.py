@@ -18,6 +18,18 @@ curr = CONN.cursor()
 
 curr.execute("""ALTER TABLE detections add source_id int""")
 if len(heket_config.RTSP_URL) > 0:
+    CONN.cursor().execute("""
+    CREATE TABLE IF NOT EXISTS sources (
+        source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type text,
+        name text,
+        enabled int,
+        lat real,
+        lon real,
+        config text,
+        updated_ts int
+    )
+    """)
     print("Migrating config to audio source...")
     vals = {}
     vals["type"] = "rtsp"

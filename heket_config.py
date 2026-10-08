@@ -38,6 +38,11 @@ NOTIFICATION_PROVIDER = None
 BOUT_MIN_CLIPS = None
 BOUT_MAX_SILENT = None
 
+
+RTSP_URL = None
+LAT = None
+LON = None
+
 # the rest of these values require a restart
 DB_FILE = os.path.join(DATA_DIR, "results.db")
 CUSTOM_MODEL_DIR = os.path.join(DATA_DIR, "custom_models")
@@ -81,7 +86,15 @@ def reload():
     global TURTLEPOND
     global LAST_MIGRATED_VERSION
 
+    global RTSP_URL
+    global LAT
+    global LON
+    
     load_dotenv(CONFIG_FILE, override=True)
+
+    RTSP_URL = os.getenv("HEKET_RTSP_URL", "")
+    LAT = float(os.getenv("HEKET_LAT", 38))
+    LON = float(os.getenv("HEKET_LON", 77))
 
     LAST_MIGRATED_VERSION = float(os.getenv("HEKET_LAST_VERSION", 0.00))
     MODEL_FILE = os.getenv("HEKET_MODEL_FILE", "")
