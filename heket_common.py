@@ -232,12 +232,20 @@ def migrate_versions():
         else:
             print("No migration necessary.")
 
+def specs_to_directory(base_folder=None, label=None, duration=None):
+    folder = str(duration).replace(".", "_") + "s"
+    if base_folder is None:
+        base_folder = heket_config.LABELED_DIR
+
+    dest_path = os.path.join(base_folder, label, folder)
+    return dest_path
+
 def slice_to_filename(label=None, file=None, duration=None, offset=None):
     base = Path(file).stem
     ext = Path(file).suffix
     dur = str(offset).replace(".", "_")
     folder = str(duration).replace(".", "_") + "s"
-    dest_path = os.path.join(heket_config.LABELED_DIR, label, folder)
+    dest_path = specs_to_directory(label=label, duration=duration)
     return os.path.join(dest_path, base + f"_{dur}" + ext), dest_path
 
 def labels_get():

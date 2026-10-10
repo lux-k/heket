@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import select
 import signal
+import shutil
 
 class AudioSource(ABC):
     def configuration() -> dict:
@@ -86,7 +87,7 @@ class ALSAAudioSource(AudioSource):
             },
             "segment_length": {
                 "type": "text",
-                "label": "Segment Length (s)",
+                "label": "Segment Length (s; integer)",
                 "required": True,
                 "coerce": float
             },
@@ -215,19 +216,7 @@ class ExternalAudioSource(AudioSource):
         return True
 
     def monitor_udev(timeout=None,fn=None,target=None):
-        proc = subprocess.Popen(
-            [
-                "udevadm",
-                "monitor",
-                "--udev",
-                "--subsystem-match=block",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
+        proc = subprocess.Popen(["udevadm", "monitor", "--udev", "--subsystem-match=block",], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         shutdown_r, shutdown_w = os.pipe()
 
         def shutdown(signum, frame):
@@ -340,9 +329,9 @@ class PAMAudioSource(AudioSource):
         }    
 
 _backends = {
-    "rtsp": {"name": "RTSP", "class": RTSPAudioSource},
-    "alsa": {"name": "ALSA Device", "class": ALSAAudioSource},
-    "ext": {"name": "External Storage", "class": ExternalAudioSource},
+    "rtsp": {"name": "RTSP", "class": RTSPAudioSource, "check": lambda: shutil.which('ffmpeg'), "correction": "RTSP requires the ffmpeg package."},
+    "alsa": {"name": "ALSA Device", "class": ALSAAudioSource, "check": lambda : shutil.which('arecord'), "correction": "ALSA devices require the alsa-utils package."},
+    "ext": {"name": "External Storage", "class": ExternalAudioSource, "check": lambda : shutil.which('udevadm'), "correction": "External storage requires the udev package."},
     "pam": {"name": "PAM Device", "class": PAMAudioSource},
 }
 

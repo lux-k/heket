@@ -445,17 +445,14 @@ def do_maintenance():
             d.id BETWEEN r.detection_id - {buff}  AND r.detection_id + {buff})""", [detection_id, heket_config.CONF_STRONG])
         rows = cur.fetchall()
         print("Deleting", len(rows), "old files")
-        if len(rows) > 500:
-            print("Cowardly refusing to delete a large number of detections")
-        else:
-            for r in rows:
-                #delete all the files
-                heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
-                cur.execute("delete from detection_slices where detection_id = ?", [r[0]])
-                cur.execute("delete from detections where id = ?", [r[0]])
+        for r in rows:
+            #delete all the files
+            heket_common.delete_file(os.path.join(heket_config.OUT_DIR, r[1]))
+            cur.execute("delete from detection_slices where detection_id = ?", [r[0]])
+            cur.execute("delete from detections where id = ?", [r[0]])
 
-            cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
-            conn.commit()
+        cur.execute("DELETE FROM weather WHERE weather_id NOT IN ( SELECT DISTINCT weather_id FROM detections )")
+        conn.commit()
 
         for source in SOURCE_CFGS:
             for label in list(SOURCE_CFGS[source]["bouts"]):
@@ -513,8 +510,9 @@ def main():
                         heket_config.save_alert("⚠️ No audio source configured for" + str(source))
                         start_acquisition(source)
                     elif SOURCE_CFGS[source]["subprocess"].poll() is not None:
-                        print("ffmpeg died, restarting...")
-                        heket_config.save_alert("⚠️ Audio recording process died for source" + str(source))
+                        print("acq died, restarting...")
+                        SOURCE_CFGS[source]["subprocess"] = None
+                        heket_config.save_alert("⚠️ Audio recording process stopped for source" + str(source))
                         start_acquisition(source)
 
                 # check if web died

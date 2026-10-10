@@ -97,7 +97,7 @@ def process_file(path):
         print(f"Error processing acq {path}: {e}")
         heket_common.delete_file(path)
 
-def notify_web(topic, data):
+def notify_web(topic, data={}):
     try:
         response = requests.post('http://localhost:5000/classifier_message', json={'topic': topic, 'data': data})
     except Exception as e:
@@ -140,7 +140,7 @@ def start_acq():
             "-f", "S16_LE",
             "-r", str(SOURCE_CFG["sr"]),
             "-c", "1",
-            "--max-file-time", str(SOURCE_CFG["segment_length"]),
+            "--max-file-time", str(int(SOURCE_CFG["segment_length"])),
             "--use-strftime",
             os.path.join(SOURCE_PATH, heket_config.FILE_FORMAT)
         ])
@@ -216,6 +216,7 @@ def pam_add_import(pam,file,source):
     cur.execute("""insert into pam_imports (serial, file_ts, import_ts, ext_id, pam_id) values (?,?,?,?,?)""",
                  [file["Serial"], int(file["Timestamp"].astimezone(turtlepond.dates.UTC_TZ).timestamp()),turtlepond.dates.get_epoch(),source,pam["source_id"]])
     rows = cur.fetchall()
+    notify_web(topic="update_source_names")
     conn.commit()
 
 def pam_sources_get():
@@ -260,6 +261,7 @@ def pam_source_add(vals):
     cur.execute("""insert into sources (type, name, enabled, lat, lon, config, updated_ts) values (?,?,?,?,?,?,?)""",
                   [vals["type"], vals["name"], 1, vals["latitude"], vals["longitude"], json.dumps(vals), turtlepond.dates.get_epoch()])
     source_id = cur.lastrowid
+    vals["source_id"] = source_id
     print("New PAM source", source_id, vals)
     notify_web(topic="notification", data={"message": f"New PAM source '{vals['name']}'"})
 

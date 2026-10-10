@@ -13,6 +13,7 @@ import random
 import turtlepond.dates
 from pathlib import Path
 from collections import Counter
+import heket_common
 
 def load_model_from_file(file):
     if file.endswith(".pkl"):
@@ -100,9 +101,8 @@ class HeketModel:
 
     def get_files(self, source_path, label):
         #source path = root of _labeled_ recordings
-        slice_part = str(heket_config.SLICE_TIME).replace(".","_") + "s"
-        local_files = self.wav_files(os.path.join(source_path, label, slice_part))
-        contrib_files = self.wav_files(os.path.join(source_path, "../", "contrib", label, slice_part))
+        local_files = self.wav_files(heket_common.specs_to_directory(base_folder=source_path, label=label, duration=heket_config.SLICE_TIME))
+        contrib_files = self.wav_files(heket_common.specs_to_directory(base_folder=os.path.join(source_path, "../", "contrib"), label=label, duration=heket_config.SLICE_TIME))
 
         contrib_count = max(0, len(contrib_files) - len(local_files))
 

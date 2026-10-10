@@ -26,16 +26,16 @@ Heket is under active development and has so far primarily been tested by its de
 
 ## What it does
 
--Acquires audio from multiple configured sources
--Supports live network audio and directly attached microphones
--Ingests recordings from external field storage
--Detects and classifies sounds of interest
--Preserves original audio, source provenance, and detection metadata
--Groups related detections into calling bouts
--Supports human review, correction, and labeling
--Retrains local models using reviewed recordings
--Bootstraps models using TurtlePond.us community clip packs
--Optionally contributes selected recordings or publishes observations externally (such as iNaturalist)
+- Acquires audio from multiple configured sources
+- Supports live network audio and directly attached microphones
+- Ingests recordings from external field storage
+- Detects and classifies sounds of interest
+- Preserves original audio, source provenance, and detection metadata
+- Groups related detections into calling bouts
+- Supports human review, correction, and labeling
+- Retrains local models using reviewed recordings
+- Bootstraps models using TurtlePond.us community clip packs
+- Optionally contributes selected recordings or publishes observations externally (such as iNaturalist)
 
 Heket is designed around a simple loop:
 

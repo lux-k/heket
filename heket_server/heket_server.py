@@ -340,6 +340,7 @@ def share_inaturalist():
         return {"shared": dupe, "id": id}
 
     if TESTING:
+        print(request.form)
         ok, response = True, {'id': 399699165}
     else:
         ok, response = heket_inaturalist.share_detection(device_id=device_id, species=species,utc_ts=utc_ts,latitude=latitude,longitude=longitude,sound=file)        
@@ -377,6 +378,7 @@ def share_turtlepond():
 
     try:
         if TESTING:
+            print(request.form)
             ok, contrib_id = True, 999
         else:
             ok, contrib_id = turtlepond_process_share(file=file, filesize=file_size, device_id=device_id, species=species, utc_ts=utc_ts, latitude=latitude,longitude= longitude,label=label,record=record)

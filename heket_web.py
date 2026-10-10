@@ -27,6 +27,7 @@ import tarfile
 import re
 import heket_audio_source
 import turtlepond.html
+import sys
 
 LABEL_CANDS = []
 CUSTOM_MODELS = []
@@ -868,7 +869,7 @@ def label_test():
     if "trimmed_file" in res and res["trimmed_file"] is not None:
         pred_result = None
         try:
-            out = subprocess.check_output('python heket_predict.py ' + res["trimmed_file"], shell=True).decode('utf-8').splitlines()[-1]
+            out = subprocess.check_output(sys.executable + ' heket_predict.py ' + res["trimmed_file"], shell=True).decode('utf-8').splitlines()[-1]
             pred_result = json.loads(out)
         except Exception as e:
             print(f"Error running predictor: {e}")
@@ -1134,7 +1135,7 @@ def share_inaturalist(detectionId=None,detection=None,label=None):
     with open(file, "rb") as f:
         files = {"audio": f}
         #FIXME
-        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": heket_config.LAT, "longitude": heket_config.LON, "species": species}
+        form_data = {"detection_id": detectionId, "utc_ts": detection["ts"], "latitude": detection["latitude"], "longitude": detection["longitude"], "species": species}
         response = requests.post(heket_config.TURTLEPOND + "share/inaturalist", data=form_data, files=files, headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
 
     if response.status_code == 200:
@@ -1200,7 +1201,7 @@ def detection_get(detectionId):
                 shareable.append( {"name": share_cfg[k]["name"], "value": k, "warning": share_cfg[k]["privacy_warning"], "class": share_cfg[k].get("class","")})
 
     result = {"detectionId": detectionId, "labels": labels, "ts": rows[0][1], "ts_formatted": turtlepond.dates.epoch_to_local(rows[0][1]),
-             "file": rows[0][2], "shareable": shareable, "shared": shared, "slices": slices, "latitude": r[0][3], "longitude": r[0][4]}
+             "file": rows[0][2], "shareable": shareable, "shared": shared, "slices": slices, "latitude": rows[0][3], "longitude": rows[0][4]}
 
     return result
 
@@ -1248,8 +1249,7 @@ def source_pam_capture():
     return {}
 
 def do_ext_dev_capture():
-    ret_val = heket_audio_source.ExternalAudioSource.monitor_udev(timeout=5,fn=heket_audio_source.ExternalAudioSource.grab_parent)
-    ret_val = "/foo/bar/hehe"
+    ret_val = heket_audio_source.ExternalAudioSource.monitor_udev(timeout=30,fn=heket_audio_source.ExternalAudioSource.grab_parent)
     if ret_val is not None:
         #sse broadcast
         sse_publish(topic="ext_device_found",data={"device": ret_val})
@@ -1290,53 +1290,57 @@ def review_event_page(review_id=0, detection_id=0):
             detection_id = rows[0][0]
             html += f"Reported: {rows[0][1]}<br>"
 
-            high = detection_id + int((2 * 60) / rows[0][2])
-            low = detection_id - int((5 * 60) / rows[0][2])
+    if detection_id > 0:
+        cur.execute("""select duration from detections d where d.id = ?""", [detection_id])
+        rows = cur.fetchall()
+        high = detection_id + int((2 * 60) / rows[0][0])
+        low = detection_id - int((5 * 60) / rows[0][0])
 
-            html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
+        html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
-            cur.execute("""SELECT
-                d.id,
-                d.recorded_ts,
-                d.file,
-                d.curated,
-                w.temp_c,
-                w.humidity,
-                w.pressure_mb,
-                w.rain_rate_mm,
-                s.source_id
-            FROM detections d
-            LEFT JOIN weather w
-                ON d.weather_id = w.weather_id
-            join sources s
-                on d.source_id = s.source_id        
-            WHERE EXISTS (
-                SELECT 1
-                FROM detection_slices ds
-                WHERE ds.detection_id = d.id
-            )	
-            and d.id >= ? and d.id <= ?
-            ORDER BY d.recorded_ts DESC
-            """, [low, high])
+        cur.execute("""SELECT
+            d.id,
+            d.recorded_ts,
+            d.file,
+            d.curated,
+            w.temp_c,
+            w.humidity,
+            w.pressure_mb,
+            w.rain_rate_mm,
+            s.source_id
+        FROM detections d
+        LEFT JOIN weather w
+            ON d.weather_id = w.weather_id
+        join sources s
+            on d.source_id = s.source_id        
+        WHERE EXISTS (
+            SELECT 1
+            FROM detection_slices ds
+            WHERE ds.detection_id = d.id
+        )	
+        and d.id >= ? and d.id <= ?
+        ORDER BY d.recorded_ts DESC
+        """, [low, high])
 
-            rows = cur.fetchall()
-            for r in rows:
-                html += f"<li>"
-                route = request.full_path
-                #rewrite "frog button" pages to review pages so it doesn't keep creating
-                #events
-                if "review_process" not in route:
-                    route = url_for("review_process") + "?id=" + str(review_id)
-        
-                weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
-                html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2],curated=r[3], source_id=r[8],
-                                        weather = weather, route=route, slices=detection_get_slices(r[0]))
-                html += "</li><br>"
-        else:
-            html += "This review period is invalid.<br><br>"
+        rows = cur.fetchall()
+        for r in rows:
+            html += f"<li>"
+            route = request.full_path
+            #rewrite "frog button" pages to review pages so it doesn't keep creating
+            #events
+            if "review_process" not in route:
+                route = url_for("review_process") + "?id=" + str(review_id)
 
-    html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
-    html += "</ul>"
+            weather = {"temp_c": r[4], "humidity": r[5], "pressure_mb": r[6], "rain_rate_mm": r[7]}
+            html += make_detection(id = r[0], recorded = turtlepond.dates.epoch_to_local(r[1]), file = r[2],curated=r[3], source_id=r[8],
+                                    weather = weather, route=route, slices=detection_get_slices(r[0]))
+            html += "</li><br>"
+
+        html += f"<br><form method=\"POST\" action=\"review_delete\"><input type=\"hidden\" name=\"id\" value=\"{review_id}\"><button type=\"submit\">Done with review</button></form>"
+        html += "</ul>"
+    else:
+        return "Detection period is invalid"
+    
     return html
 
 @app.route("/class_save", methods=["POST"])
@@ -1697,10 +1701,15 @@ def setup():
     html += '</select><br>'
 
     for key, value in heket_audio_source.types().items():
-        options.append( {"name": value["name"], "value": key} )
         divs += f"<div id=\"audio_source_{key}_div\">"
-        divs += turtlepond.html.render_fields(heket_audio_source.configuration(key),values,errors,prefix=key +"_") + "</div>"
+        options.append( {"name": value["name"], "value": key} )
+        if ("check" in heket_audio_source.types()[key] and heket_audio_source.types()[key]["check"]()) or "check" not in heket_audio_source.types()[key]:
+            divs += turtlepond.html.render_fields(heket_audio_source.configuration(key),values,errors,prefix=key +"_") 
+        else:
+            divs += heket_audio_source.types()[key]["correction"]
+
         js += f'document.getElementById("audio_source_{key}_div").hidden = type !== "{key}";'
+        divs += "</div>"
 
     html += turtlepond.html.render_fields(  {           "audio_source_type": {
                 "type": "select",
@@ -1897,6 +1906,8 @@ def download_install_packs(packs):
     try:
         time.sleep(3)
         all_packs = get_packs()
+        #sl = f"{heket_config.SLICE_TIME}s"
+        #sl = sl.replace(".","_")
         for pack in packs:
             response = requests.get(heket_config.TURTLEPOND + f"packs/{str(pack)}", headers={'X-Heket-ID': heket_config.TURTLEPOND_KEY})
             response.raise_for_status()
@@ -1911,15 +1922,16 @@ def download_install_packs(packs):
 
                 # make sure to import the label to both the contrib area
                 # and to the normal label area
-                destination = os.path.join(heket_config.LABELED_DIR, "..", "contrib", pack_info["label"], f"{heket_config.SLICE_TIME}s")
-                os.makedirs( destination, exist_ok=True)
+                destination = heket_common.specs_to_directory(label=os.path.join("..","contrib",pack_info["label"]),duration=heket_config.SLICE_TIME)
+                os.makedirs(destination, exist_ok=True)
 
                 with tarfile.open(fileobj=r.raw, mode="r|*") as tar:
                     for member in tar:
                         if bool(re.match(r"^[0-9a-fA-F_\-]+\.wav$", member.name)):
                             tar.extract(member, path=destination)
-            simple_notify(pack_info["label"] + " clip pack installed")              
 
+            simple_notify(pack_info["label"] + " clip pack installed")
+            os.makedirs(heket_common.specs_to_directory(label=pack_info["label"],duration=heket_config.SLICE_TIME), exist_ok=True)
         simple_notify("All clip packs downloaded and installed")
         simple_notify("Initiating model creation")
         model_trainer_watcher()
@@ -2011,7 +2023,7 @@ def model_train():
 def model_trainer_watcher():
     global TRAINING
  
-    TRAINING = subprocess.Popen(["python", "heket_train.py"]) 
+    TRAINING = subprocess.Popen([sys.executable, "heket_train.py"]) 
     if TRAINING is not None:
         TRAINING.wait()
         simple_notify("Model training complete")
@@ -2306,6 +2318,8 @@ def classifier_message():
         publish(SSE_MSG)
     elif req["topic"] == "notification":
         simple_notify(req["data"]["message"])
+    elif req["topic"] == "update_source_names":
+        update_source_names()
 
     return json.dumps({"result": "ok"}), 200
 
