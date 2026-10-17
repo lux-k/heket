@@ -843,7 +843,8 @@ def label_supply():
     res = prepare_audio_file(file, start)
 
     if "trimmed_file" in res and res["trimmed_file"] is not None:
-        dst = os.path.join(heket_config.LABELED_DIR, label, Path(res["trimmed_file"]).name)
+        dst, dst_path = heket_common.slice_to_filename(label=label,file=Path(res["trimmed_file"]).name,duration=heket_config.SLICE_TIME,offset=start)
+        #dst = os.path.join(heket_config.LABELED_DIR, label, Path(res["trimmed_file"]).name)
         print("Moving " + res["trimmed_file"] + " to " + dst)
         heket_common.move_file(res["trimmed_file"], dst)
         flash("Added new sample to " + label)
@@ -1080,7 +1081,6 @@ def share_turtlepond(detectionId=None,label=None,sliceId=None,detection=None,bul
 @app.route("/share_turtlepond_bulk", methods=["POST"])
 def share_turtlepond_bulk():
     clip_count = int(request.form["clip_count"])
-    clip_count = 1
     label = request.form["label"]
     req = request.form["route"]
 
@@ -1284,17 +1284,19 @@ def review_event_page(review_id=0, detection_id=0):
     
     html = f"<h1>Review Event</h1><ul>"
     if review_id != 0:
-        cur.execute("""select r.detection_id, r.recorded, d.duration from reviews r join detections d on d.id = r.detection_id where r.id = ?""", [review_id])
+        cur.execute("""select r.detection_id, r.recorded from reviews r where r.id = ?""", [review_id])
         rows = cur.fetchall()
         if len(rows) > 0:
             detection_id = rows[0][0]
             html += f"Reported: {rows[0][1]}<br>"
+            print("Found detection_id", detection_id)
 
     if detection_id > 0:
-        cur.execute("""select duration from detections d where d.id = ?""", [detection_id])
+        cur.execute("""select duration, d.id from detections d where d.id >= ? order by d.id asc limit 1""", [detection_id])
         rows = cur.fetchall()
         high = detection_id + int((2 * 60) / rows[0][0])
         low = detection_id - int((5 * 60) / rows[0][0])
+        print("Latched d_id", rows[0][1])
 
         html += f"Detection sequence: {detection_id} ({low} &#x2192; {high})<br><br>"
 
@@ -1936,6 +1938,7 @@ def download_install_packs(packs):
         simple_notify("Initiating model creation")
         model_trainer_watcher()
         model_switch(CUSTOM_MODELS[0])
+        update_labels()
         simple_notify("Switching to newly built model " + CUSTOM_MODELS[0])
 
     except Exception as e:

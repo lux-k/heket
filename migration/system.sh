@@ -12,7 +12,7 @@ TO=$(version_int "$2")
 
 migrate_026() {
     echo "Applying system migration for .26"
-    echo "heket ALL=(root) NOPASSWD: /opt/heket/contrib/heket-mounter.sh *" >> /etc/sudoers.d/heket-mounter
+    echo "heket ALL=(root) NOPASSWD: /opt/heket/contrib/heket-mounter.sh *" > /etc/sudoers.d/heket-mounter
 }
 
 for (( version=FROM+1; version<=TO; version++ )); do

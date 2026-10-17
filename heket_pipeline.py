@@ -506,13 +506,13 @@ def main():
 
                 for source in SOURCE_CFGS:
                     if SOURCE_CFGS[source].get("subprocess", None) is None:
-                        print("No source is configured for id", source)
-                        heket_config.save_alert("⚠️ No audio source configured for" + str(source))
+                        #print("No source is configured for id", source)
+                        #heket_config.save_alert("⚠️ No audio source configured for " + str(source))
                         start_acquisition(source)
                     elif SOURCE_CFGS[source]["subprocess"].poll() is not None:
                         print("acq died, restarting...")
                         SOURCE_CFGS[source]["subprocess"] = None
-                        heket_config.save_alert("⚠️ Audio recording process stopped for source" + str(source))
+                        heket_config.save_alert("⚠️ Audio recording process stopped for source " + str(source))
                         start_acquisition(source)
 
                 # check if web died

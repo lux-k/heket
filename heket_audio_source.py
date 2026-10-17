@@ -176,7 +176,7 @@ class ExternalAudioSource(AudioSource):
     def configuration() -> dict:
         return AudioSource.configuration() | {
             "device": {
-                "type": "text",
+                "type": "hidden",
                 "label": "Card Reader Device",
                 "required": True,
             },

@@ -53,9 +53,9 @@ Heket is designed around a simple loop:
 
 You will need a machine capable of running Heket and at least one source of acoustic recordings. Heket can work with live audio sources or recordings collected externally. An Internet connection is required only for optional network services such as obtaining community clip packs or sharing observations.
 
--RTSP — network audio streams
--ALSA — directly attached audio devices
--External Storage — recordings imported from field storage/PAM devices (tested against Wild Acoustics Song Meter Micro 2)
+- RTSP — network audio streams
+- ALSA — directly attached audio devices
+- External Storage — recordings imported from field storage/PAM devices (tested against Wild Acoustics Song Meter Micro 2)
 
 Heket does **not** ship with a pretrained model. Your first model is built during setup from the clip packs you choose.
 
@@ -98,6 +98,13 @@ If running Heket on a VM (either via Docker or directly on the VM),  the CPU typ
 ## Installation
 
 ### With our install script (tested on a Pi)
+
+- Flash the Pi with Raspberry Pi OS Lite (64-bit)
+- Hostname: heket (or whatever you want)
+- Set the timezone to your local TZ or UTC
+- Create a user heket. Remember the password.
+- Make sure to enable SSH (with passwords unless you feel like setting up keys)
+- SSH to the machine (e.g. ssh heket@heket)
 
 Enter these two commands on the Pi's terminal.
 
@@ -189,11 +196,9 @@ You should then be able to connect to the machine's IP on port 5000, e.g. http:/
 
 Navigate to the Heket website, for example http://192.168.100.10:5000. A new installation should automatically direct you to the setup page.
 
-Fill out the values in the Configuration Values section. Weather and notification providers are not required.
+You may tweak values in the Configuration Values setting. Out of the box defaults are sensible for now. If you do change anything, click **Save**.
 
-Click **Save**.
-
-On the setup page, locate the Audio Sources section and setup your audio source(s). A minimum recommended sample rate is 16000 and segment length is 15.
+Locate the Audio Sources section to setup your audio source(s). A minimum recommended sample rate is 16000 and segment length is 15.
 
 RTSP URLs are formatted like this: rtsp://username:password@camera_hostname:554/h264Preview_01_sub Refer to your vendor's documentation for the exact path.
 

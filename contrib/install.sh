@@ -160,8 +160,8 @@ python3 -m venv "${VENV_DIR}"
 cp "${INSTALL_DIR}/contrib/heket.service" /etc/systemd/system/heket.service
 cp "${INSTALL_DIR}/contrib/heket-update.service" /etc/systemd/system/heket-update.service
 
-echo "heket ALL=(root) NOPASSWD: /usr/bin/systemctl start heket-update.service" >> /etc/sudoers.d/heket-update
-echo "heket ALL=(root) NOPASSWD: /opt/heket/contrib/heket-mounter.sh *" >> /etc/sudoers.d/heket-mounter
+echo "heket ALL=(root) NOPASSWD: /usr/bin/systemctl start heket-update.service" > /etc/sudoers.d/heket-update
+echo "heket ALL=(root) NOPASSWD: /opt/heket/contrib/heket-mounter.sh *" > /etc/sudoers.d/heket-mounter
 
 systemctl daemon-reload
 systemctl enable --now heket
